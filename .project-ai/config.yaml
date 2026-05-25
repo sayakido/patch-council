@@ -1,0 +1,50 @@
+agents:
+  codex:
+    type: cli
+    command: codex
+    args:
+    - exec
+    - --sandbox
+    - read-only
+    - '-'
+    input_mode: stdin
+    capabilities:
+    - plan
+    - synthesize
+    - review
+    - judge
+    write_access: false
+    timeout_sec: 1800
+  opencode:
+    type: cli
+    command: opencode
+    args:
+    - run
+    input_mode: argument
+    capabilities:
+    - challenge
+    - implement
+    - fix
+    write_access: true
+    timeout_sec: 1800
+workflow:
+  default: codex_plan_opencode_do
+  max_fix_rounds: 2
+context:
+  max_files: 20
+  max_diff_chars: 40000
+  include:
+  - README.md
+  - package.json
+  - pyproject.toml
+  - Cargo.toml
+  - go.mod
+  - .project-ai/memory.md
+  - .project-ai/decisions.md
+  exclude:
+  - .git
+  - node_modules
+  - dist
+  - build
+  - target
+  - .venv
