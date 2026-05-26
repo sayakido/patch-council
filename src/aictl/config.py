@@ -36,6 +36,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "default": "codex_plan_opencode_do",
         "max_fix_rounds": 2,
     },
+    "council": {
+        "max_turns": 3,
+        "min_distinct_agents": 2,
+        "max_context_chars": 2500,
+        "max_transcript_chars": 2500,
+        "max_message_chars": 800,
+    },
     "context": {
         "max_files": 20,
         "max_diff_chars": 40000,

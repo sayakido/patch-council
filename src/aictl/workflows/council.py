@@ -37,20 +37,41 @@ class CouncilDecision:
     raw: str
 
 
+@dataclass(frozen=True)
+class CouncilLimits:
+    max_context_chars: int
+    max_transcript_chars: int
+    max_message_chars: int
+
+
 def run_council(paths: ProjectPaths, config: dict, registry: AgentRegistry, topic: str) -> CouncilSession:
     session = create_session(paths, topic)
     context = collect_context(paths.root, config, topic)
-    max_turns = int(config.get("council", {}).get("max_turns", 3))
+    council_cfg = config.get("council", {})
+    max_turns = int(council_cfg.get("max_turns", 3))
+    min_distinct_agents = int(council_cfg.get("min_distinct_agents", 2))
+    limits = CouncilLimits(
+        max_context_chars=int(council_cfg.get("max_context_chars", 12000)),
+        max_transcript_chars=int(council_cfg.get("max_transcript_chars", 8000)),
+        max_message_chars=int(council_cfg.get("max_message_chars", 3000)),
+    )
     agent_profiles = format_agent_profiles(config)
 
     append_message(session, "user", "topic", topic)
     write_state(session, {"id": session.id, "status": "running", "stage": "started", "topic": topic})
 
     try:
-        decision = route_first_turn(registry, paths.root, topic, context, agent_profiles, read_transcript(session))
+        decision = route_first_turn(
+            registry,
+            paths.root,
+            topic,
+            build_council_brief(session, context, topic, limits),
+            agent_profiles,
+        )
         append_message(session, "coordinator", "route", decision.raw)
 
         turn_count = 0
+        spoken_agents: set[str] = set()
         while decision.action == "continue" and turn_count < max_turns:
             agent_name = resolve_agent_name(registry, decision.agent)
             response = invoke_named_agent(
@@ -63,12 +84,13 @@ def run_council(paths: ProjectPaths, config: dict, registry: AgentRegistry, topi
                     "agent_name": agent_name,
                     "turn_role": decision.role,
                     "topic": topic,
-                    "context": context,
-                    "transcript": read_transcript(session),
+                    "context": build_council_brief(session, context, topic, limits),
+                    "transcript": "",
                 },
             )
             append_message(session, agent_name, "turn", response)
             turn_count += 1
+            spoken_agents.add(agent_name)
             write_state(
                 session,
                 {
@@ -84,20 +106,34 @@ def run_council(paths: ProjectPaths, config: dict, registry: AgentRegistry, topi
                 registry,
                 paths.root,
                 topic,
-                context,
+                build_council_brief(session, context, topic, limits),
                 agent_profiles,
-                read_transcript(session),
                 max_turns,
                 turn_count,
             )
             append_message(session, "coordinator", "decision", decision.raw)
+            original_action = decision.action
+            decision = enforce_min_distinct_agents(
+                decision=decision,
+                registry=registry,
+                spoken_agents=spoken_agents,
+                min_distinct_agents=min_distinct_agents,
+                turn_count=turn_count,
+                max_turns=max_turns,
+            )
+            if original_action == "finalize" and decision.action == "continue":
+                append_message(session, "coordinator", "policy", decision.raw)
 
         final = invoke_coordinator(
             registry=registry,
             role="council-finalize",
             template="council_finalize.md",
             cwd=paths.root,
-            values={"topic": topic, "context": context, "transcript": read_transcript(session)},
+            values={
+                "topic": topic,
+                "context": build_council_brief(session, context, topic, limits),
+                "transcript": "",
+            },
         )
         append_message(session, "coordinator", "final", final)
         write_state(
@@ -130,16 +166,15 @@ def route_first_turn(
     registry: AgentRegistry,
     cwd: Path,
     topic: str,
-    context: str,
+    brief: str,
     agent_profiles: str,
-    transcript: str,
 ) -> CouncilDecision:
     raw = invoke_coordinator(
         registry=registry,
         role="council-route",
         template="council_route.md",
         cwd=cwd,
-        values={"topic": topic, "context": context, "agent_profiles": agent_profiles, "transcript": transcript},
+        values={"topic": topic, "context": brief, "agent_profiles": agent_profiles, "transcript": ""},
     )
     return parse_route_decision(raw)
 
@@ -148,9 +183,8 @@ def decide_next_turn(
     registry: AgentRegistry,
     cwd: Path,
     topic: str,
-    context: str,
+    brief: str,
     agent_profiles: str,
-    transcript: str,
     max_turns: int,
     turn_count: int,
 ) -> CouncilDecision:
@@ -161,9 +195,9 @@ def decide_next_turn(
         cwd=cwd,
         values={
             "topic": topic,
-            "context": context,
+            "context": brief,
             "agent_profiles": agent_profiles,
-            "transcript": transcript,
+            "transcript": "",
             "max_turns": max_turns,
             "turn_count": turn_count,
         },
@@ -265,9 +299,51 @@ def write_state(session: CouncilSession, state: dict) -> None:
     session.state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def read_transcript(session: CouncilSession) -> str:
-    text = session.transcript_md.read_text(encoding="utf-8")
-    return text[-20000:]
+def build_council_brief(session: CouncilSession, context: str, topic: str, limits: CouncilLimits) -> str:
+    records = read_transcript_records(session)
+    recent_records = records[-6:]
+    recent_messages: list[str] = []
+    for record in recent_records:
+        speaker = str(record.get("speaker", "unknown"))
+        role = str(record.get("role", "message"))
+        content = clip_text(str(record.get("content", "")), limits.max_message_chars)
+        recent_messages.append(f"### {speaker} ({role})\n{content}")
+
+    full_transcript_note = session.transcript_md.relative_to(session.path.parent.parent).as_posix()
+    transcript_text = "\n\n".join(recent_messages) if recent_messages else "No transcript messages yet."
+    transcript_text = clip_text(transcript_text, limits.max_transcript_chars)
+
+    return "\n\n".join(
+        [
+            "# Council Brief",
+            "## Topic\n" + topic,
+            "## Project Context\n" + clip_text(context, limits.max_context_chars),
+            "## Recent Transcript\n" + transcript_text,
+            "## Full Transcript Location\n" + full_transcript_note,
+        ]
+    )
+
+
+def read_transcript_records(session: CouncilSession) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    if not session.transcript_jsonl.exists():
+        return records
+    for line in session.transcript_jsonl.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return records
+
+
+def clip_text(text: str, limit: int) -> str:
+    if limit <= 0 or len(text) <= limit:
+        return text
+    head = max(limit // 2, 1)
+    tail = max(limit - head, 1)
+    return text[:head] + "\n\n[... clipped ...]\n\n" + text[-tail:]
 
 
 def format_agent_profiles(config: dict[str, Any]) -> str:
@@ -308,6 +384,52 @@ def resolve_agent_name(registry: AgentRegistry, requested: str | None) -> str:
         if fallback in registry.agent_configs:
             return fallback
     return next(iter(registry.agent_configs))
+
+
+def enforce_min_distinct_agents(
+    *,
+    decision: CouncilDecision,
+    registry: AgentRegistry,
+    spoken_agents: set[str],
+    min_distinct_agents: int,
+    turn_count: int,
+    max_turns: int,
+) -> CouncilDecision:
+    if decision.action != "finalize":
+        return decision
+    if turn_count >= max_turns or len(spoken_agents) >= min_distinct_agents:
+        return decision
+    next_agent = next_unspoken_agent(registry, spoken_agents)
+    if next_agent is None:
+        return decision
+    raw = (
+        "## Decision\n"
+        "continue\n\n"
+        "## Next agent\n"
+        f"{next_agent}\n\n"
+        "## Role\n"
+        "Provide an independent second perspective before the council finalizes.\n\n"
+        "## Reason\n"
+        f"Coordinator requested finalize, but council.min_distinct_agents={min_distinct_agents} "
+        f"requires another distinct agent before final synthesis."
+    )
+    return CouncilDecision(
+        action="continue",
+        agent=next_agent,
+        role="Provide an independent second perspective before the council finalizes.",
+        reason=f"Minimum distinct agent requirement not met: {len(spoken_agents)}/{min_distinct_agents}.",
+        raw=raw,
+    )
+
+
+def next_unspoken_agent(registry: AgentRegistry, spoken_agents: set[str]) -> str | None:
+    for preferred in ("opencode", "codex"):
+        if preferred in registry.agent_configs and preferred not in spoken_agents:
+            return preferred
+    for name in registry.agent_configs:
+        if name not in spoken_agents:
+            return name
+    return None
 
 
 def section(markdown: str, title: str) -> str:
