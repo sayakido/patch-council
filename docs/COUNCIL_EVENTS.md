@@ -139,7 +139,7 @@ debug 模式可以选择持久化。
 ```json
 {
   "type": "runtime.turn.failed",
-  "runtime": "opencode",
+  "runtime": "claude",
   "thread_id": "thread-1",
   "turn_id": "turn-1",
   "message": "command timed out"
@@ -292,8 +292,8 @@ session_error
       "roles": ["coordinator", "agent"]
     },
     {
-      "id": "opencode",
-      "command": "opencode",
+      "id": "claude",
+      "command": "claude",
       "roles": ["agent"]
     }
   ]
@@ -433,7 +433,7 @@ abort
   "policy": "min_distinct_agents",
   "original_decision": "finalize",
   "new_decision": "continue",
-  "selected_agent": "opencode",
+  "selected_agent": "claude",
   "reason": "min_distinct_agents=2 未满足，且尚未达到 max_turns"
 }
 ```
@@ -454,7 +454,7 @@ abort
   "phase": "discussion",
   "session_id": "20260527-001",
   "turn": 2,
-  "agent": "opencode",
+  "agent": "claude",
   "role": "从实现可行性角度挑战方案",
   "selected_by": "policy",
   "selection_reason": "min_distinct_agents=2 未满足，强制选择尚未发言的 agent"
@@ -485,7 +485,7 @@ user
   "phase": "discussion",
   "session_id": "20260527-001",
   "turn": 2,
-  "agent": "opencode",
+  "agent": "claude",
   "content": "完整回复 Markdown...",
   "content_length": 1234,
   "duration_ms": 18420
@@ -552,7 +552,7 @@ replay 默认可以一次性展示 `content`。如果 debug 日志包含 `runtim
   "outcome": "discussion_only",
   "duration_ms": 192000,
   "turn_count": 3,
-  "distinct_agents": ["codex", "opencode"],
+  "distinct_agents": ["codex", "claude"],
   "error_count": 0
 }
 ```
@@ -594,7 +594,7 @@ details
   "phase": "discussion",
   "session_id": "20260527-001",
   "turn": 2,
-  "agent": "opencode",
+  "agent": "claude",
   "message": "command timed out",
   "recoverable": true,
   "action": "fallback_finalize",
@@ -695,7 +695,7 @@ aictl session status <id>
   "started_at": "2026-05-27T10:00:00+08:00",
   "finished_at": "2026-05-27T10:03:12+08:00",
   "turn_count": 3,
-  "distinct_agents": ["codex", "opencode"],
+  "distinct_agents": ["codex", "claude"],
   "last_seq": 14,
   "outcome": "discussion_only",
   "error_count": 0

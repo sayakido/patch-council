@@ -226,15 +226,58 @@ fake runtime 覆盖：
 
 ```text
 npm run runtime:codex    已通过，验证 codex.cmd 发现和 codex --help 流式读取
-npm run runtime:opencode 未验证，当前 shell 找不到 opencode
+npm run runtime:claude   待验证（opencode 已卸载，替换为 claude）
 ```
 
 ### 影响
 
 - Node adapter 已经证明可以覆盖核心进程行为和 Codex 轻量调用。
-- OpenCode 仍是 checkpoint 风险，下一步应先解决 PATH/安装发现，再跑 `npm run runtime:opencode`。
-- 在 OpenCode 验证前，不应正式宣布 Node 全栈路线完全确定。
-- 当前倾向仍是继续推进 Node 全栈；若 OpenCode 在 Node 下不稳定，再退回 Python engine + Node UI。
+- 后续决定将 opencode 替换为 claude，继续推进 Node 全栈。详见 opencode→claude 决策条目。
+
+## 2026-05-27：opencode → claude 替换
+
+状态：已接受
+
+### 背景
+
+`opencode` 已被卸载。Node runtime adapter spike 验证了 `codex --help`，但 `opencode` 因 PATH 不可用而跳过。
+
+Claude Code CLI（`claude`）作为替代方案有几个优势：
+- 原生 `--output-format stream-json` + `--include-partial-messages`，与 Codex `--json` 一样可直接对接 adapter
+- `--no-session-persistence` 避免残留 session 文件
+- `--permission-mode bypassPermissions` 跳过交互式授权
+- `--max-budget-usd` 控制成本
+
+### 决策
+
+将 agent 配置从 `codex + opencode` 改为 `codex + claude`：
+- codex：coordinator + agent（capabilities: plan, synthesize, review, judge）
+- claude：agent（capabilities: challenge, implement, fix）
+
+### 影响
+
+- 需要验证 `claude` 通过 runtime adapter（`npm run runtime:claude`）
+- Claude Code CLI 的 argument 模式（`claude -p "message"`）和 `opencode run "message"` 调用形态相似，迁移成本低
+- Claude Code CLI 的 JSON 流式输出比 OpenCode 的纯文本输出更适合结构化事件管线
+- 未来如果加入更多 agent，adapter 的 `parseRuntimeLine` 已支持通用 JSONL 解析
+
+## 2026-05-27：决定推进 Node 全栈路线
+
+状态：已接受
+
+### 背景
+
+Node runtime adapter spike 已通过 fake 矩阵 + 真实 codex 验证。全栈 Node 的主要技术风险（Windows subprocess、流式输出、超时清理）已打掉。
+
+### 决策
+
+选择 Node 全栈而非 Python engine + Node UI。详细实现计划见 `docs/ROADMAP.md`。
+
+### 影响
+
+- Python council loop（`src/aictl/workflows/council.py` 等）作为参考实现保留，待全栈稳定后移除
+- 事件类型定义（`events.ts`）成为 engine 和 UI 的共享单源真相
+- `transcript.jsonl` 作为唯一权威日志的设计保持不变
 
 ## 2026-05-26：Coordinator 决策暂时使用 Markdown
 

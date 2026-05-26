@@ -20,14 +20,15 @@ aictl "自然语言请求"
 - 近期优先级仍然是完善 `council` loop，然后再做自然语言主入口。
 - 2026-05-27 的方向调整：如果目标是让用户看到 AI 讨论过程，主体验应转向本地可视化 UI，而不是继续在 Python CLI 上做复杂展示。
 - Node/TypeScript UI spike 已完成：mock session list、discussion timeline 和 work/status panel 已跑通。
-- Node runtime adapter spike 已完成：fake runtime 矩阵通过，真实 `codex --help` 已通过 Node adapter；真实 `opencode` 当前未验证，因为当前 shell 找不到 `opencode`。
-- 当前倾向：继续评估 Node 全栈路线，但 OpenCode 真实调用仍是 checkpoint 风险点。
+- Node runtime adapter spike 已完成：fake runtime 矩阵 + 真实 `codex --help` 已通过 Node adapter。
+- `opencode` 已卸载，决定替换为 `claude`（Claude Code CLI）。Claude Code CLI 原生支持 `--output-format stream-json`，与 Codex 的 `--json` 一样可直接对接 adapter 的 JSONL 解析。
+- 下一步：验证 `claude` 通过 runtime adapter（`npm run runtime:claude`），然后正式推进 Node 全栈实现。
 
 ## Council 模型
 
 - `aictl council "主题"` 会启动一个只读的多 agent 讨论。
 - coordinator 负责判断下一轮应该由哪个 AI 发言。
-- agent 发言顺序是动态的，不再硬编码为 `Codex -> OpenCode -> Codex`。
+- agent 发言顺序是动态的，不再硬编码为固定顺序。
 - 每轮 agent 发言后，coordinator 判断继续讨论还是收束。
 - 当前最多允许 3 轮 agent 发言。
 - council 模式当前不应该修改项目文件。
@@ -67,9 +68,9 @@ Council 会话保存在：
 - 完整 transcript 保存在磁盘，但不要在每轮模型调用时重新塞入完整 transcript。
 - 每轮模型输入只使用压缩后的 Council Brief。
 - Windows 命令行长度有限，不能长期依赖一个超长命令行参数传递完整上下文。
-- `opencode run "message"` 通过 argv 方式调用是可用的，但大消息仍然需要压缩。
+- `opencode run "message"` 通过 argv 方式调用是可用的，但大消息仍然需要压缩。`claude -p "message"` 是替代方案，原生支持 `--output-format stream-json --include-partial-messages`。
 - Council 后续应从黑箱 CLI 输出改成可观察事件流，实时展示 coordinator 决策、agent 发言、策略覆盖和错误处理。
-- 事件模型分为两层：runtime events 表达底层 CLI 运行状态，council events 表达产品语义。不要把 Codex/OpenCode/Claude 的原始输出直接暴露成 council event。
+- 事件模型分为两层：runtime events 表达底层 CLI 运行状态，council events 表达产品语义。不要把 Codex/Claude 的原始输出直接暴露成 council event。
 
 ## 当前 Prompt 文件
 
@@ -124,7 +125,4 @@ aictl council --help
 
 ## 下一步优先级
 
-1. 先解决真实 OpenCode 可执行文件发现问题，跑通 `npm run runtime:opencode`。
-2. 若 OpenCode 真实调用通过，继续 Node 全栈方向：实现 session store，把 runtime events 提升为 council events。
-3. 若 OpenCode 在 Node adapter 下不稳定，再回到 Python engine + Node UI，使用 `transcript.jsonl` 作为语言边界。
-4. 后续补 `aictl session replay <id>` 或 UI replay、上下文压缩测试和 `min_distinct_agents` 策略测试。
+见 `docs/ROADMAP.md`。当前阶段：Node 全栈实现，详见路线图。

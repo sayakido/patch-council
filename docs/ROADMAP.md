@@ -4,55 +4,58 @@
 
 ## 现在
 
-1. 解决当前 shell 找不到 `opencode` 的问题。
-2. 跑通 `npm run runtime:opencode`，验证 Node adapter 对 OpenCode 的真实兼容性。
-3. 如果 OpenCode 验证通过，继续 Node 全栈方向。
-4. 如果 OpenCode 验证不稳定，选择 Python engine + Node UI，以 `transcript.jsonl` 作为语言边界。
+当前状态：
 
-## 接下来
+- UI spike 已完成（mock session list、discussion timeline、work/status panel）
+- Runtime adapter spike 已完成（fake 矩阵 + `codex --help` 通过）
+- `opencode` 已卸载，决定替换为 `claude`（Claude Code CLI）
+- 两个 CLI 都有原生 JSON 流式输出：Codex `--json`、Claude `--output-format stream-json`
 
-1. 如果 checkpoint 选择继续 Node 全栈，实现 session store：
+马上要做（按顺序）：
 
-```text
-transcript.jsonl
-state.json
-transcript.md
-```
-
-2. 实现 council orchestrator spike：
+1. 验证 `claude` CLI 通过 runtime adapter：`npm run runtime:claude`
+2. 全部 runtime check 通过后，进入 Node 全栈实现：
 
 ```text
-Codex/OpenCode raw output
--> runtime events
--> council events
-```
+Step 0: Runtime Verification
+  - npm run runtime:fake（已有）
+  - npm run runtime:codex（已有）
+  - npm run runtime:claude（新增，claude -p "..." --output-format stream-json ...）
 
-3. 让 `transcript.jsonl` 成为唯一权威日志，`state.json` 和 `transcript.md` 改为派生视图。
-4. 增加 `aictl session replay <id>` 或 UI replay。
-5. 给 council 上下文压缩和 `min_distinct_agents` 策略补单元测试。
+Step 1: Engine Config & Prompts
+  新建 engine/config.ts  — 配置加载 + 默认值合并，agent 配置 codex + claude
+  新建 engine/prompts.ts — {{ variable }} 模板替换，替代 Jinja2
+  复制 src/aictl/prompts/council_*.md → engine/prompts/
 
-未来 agent profile 形态示例：
+Step 2: Session Store
+  新建 engine/session-store.ts
+    - createSession / appendEvent（每事件一行，立即 flush）
+    - deriveState（从 jsonl 重建 state.json）
+    - generateTranscript（从 jsonl 生成 transcript.md）
+    - readEvents（按 seq 排序读取）
 
-```yaml
-council:
-  agents:
-    codex:
-      strengths:
-        - 结构化推理
-        - 综合总结
-        - 风险审查
-    opencode:
-      strengths:
-        - 实现可行性
-        - 本地项目上下文
-        - 挑战假设
+Step 3: Council Engine
+  新建 engine/council.ts  — port council.py 的 loop 逻辑，使用 EventEmitter
+  新建 engine/event-sink.ts — JsonlSink / StateSnapshotSink / CliRendererSink
+  引擎 fan-out: emit(event) → 三个 sink 各自消费
+
+Step 4: CLI Entry Point
+  新建 cli/cli.ts
+    - council "topic"     启动 council 讨论
+    - session list        列出所有 session
+    - session show <id>   显示 session 摘要
+    - session replay <id> 从 jsonl 回放
+
+Step 5: UI Real-Time
+  修改 server.js  — 增加 GET /api/sessions/:id/events?since=<seq> 增量轮询
+  修改 public/app.js — running session 自动轮询（3s），新事件追加到 timeline
 ```
 
 ## 以后
 
 1. 把 coordinator 决策从 Markdown 章节改为严格 JSON。
 2. 为 JSON 解析失败、未知 agent、最大轮数处理增加兜底行为。
-3. 增加 council 专用的 agent 能力画像配置。
+3. 给上下文压缩和 `min_distinct_agents` 策略补单元测试。
 4. 讨论后生成结构化 workplan，但暂不自动执行。
 5. 增加自然语言主入口：
 

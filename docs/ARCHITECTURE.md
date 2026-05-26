@@ -17,20 +17,19 @@
 
 ## 体验方向
 
-Council 的核心体验应该是“看见 AI 如何讨论”，而不是只得到最终总结。
+Council 的核心体验应该是”看见 AI 如何讨论”，而不是只得到最终总结。
 
-因此当前方向是先做本地可视化 UI spike，而不是继续加重 CLI 渲染：
+已完成：
 
 ```text
-Node/TypeScript UI spike
--> mock council events
--> session list
--> discussion timeline
--> work/status panel
--> checkpoint 决定 engine 方向
+UI spike（mock events → session list → timeline → work/status panel）
+Runtime adapter spike（fake 矩阵 + 真实 codex 验证通过）
+opencode → claude 替换决策
 ```
 
-CLI 仍然有价值，但定位应是启动、调试和自动化入口，不是主要观察界面。
+当前方向：Node 全栈实现（engine + session store + CLI + 实时 UI）。
+
+CLI 定位是启动、调试和自动化入口，可视化 UI 是主要观察界面。详见 `docs/ROADMAP.md`。
 
 ## Council Loop
 
@@ -135,21 +134,29 @@ codex still running as council-route (30s elapsed). last stderr: ...
 
 这类 heartbeat 更适合作为 CLI runtime 状态，不应默认写入核心事件日志。真正影响 session 语义的失败应记录为 `agent_error`、`coordinator_error` 或 `session_error`。
 
-## OpenCode 集成
+## AI CLI 集成
 
-OpenCode 当前配置围绕：
+当前 agent 配置：
 
 ```yaml
-opencode:
-  command: opencode
-  args:
-    - run
+codex:
+  command: codex
+  args: [exec, --json, --sandbox, read-only, --ephemeral, -]
+  input_mode: stdin
+  capabilities: [plan, synthesize, review, judge]
+  roles: [coordinator, agent]
+
+claude:
+  command: claude
+  args: [-p]
   input_mode: argument
+  capabilities: [challenge, implement, fix]
+  roles: [agent]
 ```
 
-通过 Python subprocess 的 argv 方式调用时，`opencode run "message"` 可用。Windows 上需要注意 shell 引号和超长单条命令行消息。
+两个 CLI 都有原生 JSON 流式输出（Codex `--json`、Claude `--output-format stream-json`），Node adapter 的 `parseRuntimeLine` 可直接解析。
 
-后续如果 checkpoint 选择 Node 全栈，需要用 Node `child_process` 重新验证 Codex/OpenCode 调用、流式输出、取消和错误处理。若选择 Python engine + Node UI，则以 `transcript.jsonl` 作为语言边界。
+`claude -p "message"` 替代了之前的 `opencode run "message"`。Claude Code CLI 额外支持 `--include-partial-messages` 做 chunk 级流式、`--no-session-persistence` 避免残留 session 文件、`--permission-mode bypassPermissions` 跳过交互式授权。
 
 ## Prompt 组织
 
