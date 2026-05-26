@@ -40,16 +40,25 @@ Step 3: Council Engine
   引擎 fan-out: emit(event) → 三个 sink 各自消费
 
 Step 4: CLI Entry Point
-  新建 cli/cli.ts
-    - council "topic"     启动 council 讨论
-    - session list        列出所有 session
-    - session show <id>   显示 session 摘要
-    - session replay <id> 从 jsonl 回放
+  新建 cli/cli.ts — 只实现 `council "topic"` 子命令
+    session list/show/replay 已由 Web UI 覆盖，不重复实现
 
 Step 5: UI Real-Time
   修改 server.js  — 增加 GET /api/sessions/:id/events?since=<seq> 增量轮询
   修改 public/app.js — running session 自动轮询（3s），新事件追加到 timeline
 ```
+
+工作量预估：
+
+| Step | 预估 |
+|---|---|
+| 0. Runtime Verification | 15min |
+| 1. Config & Prompts | 30min |
+| 2. Session Store | 45min |
+| 3. Council Engine | 1.5-2h |
+| 4. CLI Entry | 10min |
+| 5. UI Real-Time | 30min |
+| **合计** | **3.5-4h** |
 
 ## 以后
 
