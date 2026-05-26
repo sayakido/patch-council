@@ -1,0 +1,763 @@
+# Council 事件模型
+
+这个文件定义 council session 的事件日志设计。它是后续实现可视化 UI、session replay 和执行编排扩展的基础。
+
+## 设计目标
+
+Council 的核心价值不是只产出最终答案，而是让用户看到多个 AI 如何讨论、分歧、被策略约束，并最终收束。
+
+事件模型要同时支持：
+
+- 可视化 UI 渲染；
+- 最小 CLI 调试输出；
+- session replay；
+- 可靠调试和审计；
+- 未来从只读讨论扩展到任务分配和执行编排。
+
+## 核心规则
+
+```text
+transcript.jsonl 是唯一权威事件日志。
+state.json 是从事件流派生的当前状态快照。
+transcript.md 是从事件流渲染的人类可读视图。
+```
+
+含义：
+
+- 任何重要业务事实都必须能从 `transcript.jsonl` 重建。
+- `state.json` 可以删除后重建，不能保存无法从事件流推导的独立状态。
+- `transcript.md` 不应和事件流并行维护，而应由事件流生成。
+- `agent_turn_completed` 默认落盘，并携带完整 agent 回复内容。
+
+## 双层事件模型
+
+事件分为两层：
+
+```text
+runtime events：adapter 层，描述某个 AI CLI 实际运行发生了什么。
+council events：orchestrator / 产品层，描述 council 语义发生了什么。
+```
+
+推荐流向：
+
+```text
+Codex / OpenCode / Claude 原始输出
+-> runtime adapter
+-> runtime events
+-> council orchestrator
+-> council events
+-> transcript.jsonl / state.json / UI
+```
+
+不要把不同 CLI 的原始输出格式直接暴露成 council event。底层差异应先由 runtime adapter 归一化。
+
+`runtime.reply.delta` 这类流式增量属于 runtime 层，不属于 council 核心语义。UI 可以用它显示实时文本，但持久化 council log 应以 `agent_turn_completed.content` 作为完整回复事实来源。
+
+## Runtime Events
+
+Runtime events 是 adapter 输出。它们可以被 UI 临时消费，也可以在 debug 模式下持久化，但默认不应全部写入 council 的 `transcript.jsonl`。
+
+第一版建议 runtime event 集合：
+
+```text
+runtime.turn.started
+runtime.reply.delta
+runtime.reply.completed
+runtime.turn.completed
+runtime.turn.failed
+runtime.approval.requested
+runtime.context.updated
+```
+
+### runtime.turn.started
+
+表示某个 AI runtime 开始一轮调用。
+
+```json
+{
+  "type": "runtime.turn.started",
+  "runtime": "codex",
+  "thread_id": "thread-1",
+  "turn_id": "turn-1"
+}
+```
+
+### runtime.reply.delta
+
+表示 runtime 回复的流式增量。它取代旧设计里的 `agent_chunk`。
+
+```json
+{
+  "type": "runtime.reply.delta",
+  "runtime": "codex",
+  "thread_id": "thread-1",
+  "turn_id": "turn-1",
+  "text": "部分增量内容"
+}
+```
+
+默认策略：
+
+```text
+runtime.reply.delta 用于实时 UI。
+runtime.reply.delta 默认不写入 transcript.jsonl。
+debug 模式可以选择持久化。
+```
+
+### runtime.reply.completed
+
+表示 runtime 完成一条 assistant 回复。
+
+```json
+{
+  "type": "runtime.reply.completed",
+  "runtime": "codex",
+  "thread_id": "thread-1",
+  "turn_id": "turn-1",
+  "item_id": "item-1",
+  "text": "完整回复内容"
+}
+```
+
+### runtime.turn.completed
+
+表示 runtime turn 正常结束。
+
+```json
+{
+  "type": "runtime.turn.completed",
+  "runtime": "codex",
+  "thread_id": "thread-1",
+  "turn_id": "turn-1"
+}
+```
+
+### runtime.turn.failed
+
+表示 runtime turn 失败。
+
+```json
+{
+  "type": "runtime.turn.failed",
+  "runtime": "opencode",
+  "thread_id": "thread-1",
+  "turn_id": "turn-1",
+  "message": "command timed out"
+}
+```
+
+### runtime.approval.requested
+
+表示 runtime 请求用户批准某个动作。即使第一版 UI spike 不实现审批，也应在 schema 中预留。
+
+```json
+{
+  "type": "runtime.approval.requested",
+  "runtime": "codex",
+  "thread_id": "thread-1",
+  "turn_id": "turn-1",
+  "request_id": "approval-1",
+  "kind": "command",
+  "reason": "需要运行测试命令",
+  "command": "pytest",
+  "file_paths": [],
+  "response_template": {
+    "supported_commands": ["yes", "no"]
+  }
+}
+```
+
+### runtime.context.updated
+
+表示 runtime 报告上下文窗口或 token 使用情况。
+
+```json
+{
+  "type": "runtime.context.updated",
+  "runtime": "codex",
+  "thread_id": "thread-1",
+  "input_tokens": 1200,
+  "output_tokens": 300,
+  "current_tokens": 1500,
+  "context_window": 128000
+}
+```
+
+## 通用字段
+
+每个落盘 council event 都应包含：
+
+```json
+{
+  "schema_version": 1,
+  "seq": 0,
+  "type": "session_started",
+  "phase": "discussion",
+  "session_id": "20260527-..."
+}
+```
+
+字段说明：
+
+- `schema_version`：事件 schema 版本。第一版固定为 `1`。
+- `seq`：session 内单调递增事件序号，从 `0` 开始。
+- `type`：事件类型。
+- `phase`：事件发生时所在阶段。
+- `session_id`：当前 session 标识。
+
+`seq` 是权威顺序。JSONL 的物理行顺序通常相同，但 replay 和工具处理时应优先使用 `seq` 排序。
+
+`turn` 表示 session 内的讨论轮次，从 `0` 开始。`turn: 0` 通常用于初始 route；每次 agent 发言开始时递增。coordinator 的 decide/finalize 事件应使用它正在处理或刚完成的 agent turn。
+
+## Phase
+
+第一版主要实现只读 discussion，但 schema 需要保留后续执行扩展路径。
+
+建议 phase 值：
+
+```text
+discussion
+task_assignment
+execution
+review
+finalized
+```
+
+当前实现主要使用：
+
+```text
+discussion
+finalized
+```
+
+注意：
+
+```text
+discussion 阶段 finalized 不等于 session_finished。
+session_finished 才表示整个 session 生命周期结束。
+```
+
+## Council Event 类型
+
+第一版 council event 集合：
+
+```text
+session_started
+phase_transition
+coordinator_turn_started
+coordinator_decided
+coordinator_turn_completed
+policy_override
+agent_turn_started
+agent_turn_completed
+finalization_started
+finalized
+session_finished
+agent_error
+coordinator_error
+session_error
+```
+
+## session_started
+
+表示 session 创建。它必须是 `seq: 0`。
+
+示例：
+
+```json
+{
+  "schema_version": 1,
+  "seq": 0,
+  "type": "session_started",
+  "phase": "discussion",
+  "session_id": "20260527-001",
+  "started_at": "2026-05-27T10:00:00+08:00",
+  "topic": "讨论下一步优先级",
+  "mode": "council",
+  "config": {
+    "max_turns": 3,
+    "min_distinct_agents": 2,
+    "max_context_chars": 2500,
+    "max_transcript_chars": 2500,
+    "max_message_chars": 800
+  },
+  "capabilities": {
+    "can_execute": false,
+    "requires_user_confirmation_before_write": true
+  },
+  "agents": [
+    {
+      "id": "codex",
+      "command": "codex",
+      "roles": ["coordinator", "agent"]
+    },
+    {
+      "id": "opencode",
+      "command": "opencode",
+      "roles": ["agent"]
+    }
+  ]
+}
+```
+
+`session_started` 保存配置和 agent 快照。replay 旧 session 时，不应依赖当前配置文件。
+
+## phase_transition
+
+表示 session 从一个 phase 进入另一个 phase。
+
+示例：
+
+```json
+{
+  "schema_version": 1,
+  "seq": 17,
+  "type": "phase_transition",
+  "phase": "task_assignment",
+  "session_id": "20260527-001",
+  "from": "discussion",
+  "to": "task_assignment",
+  "trigger": "coordinator",
+  "reason": "discussion produced an actionable workplan"
+}
+```
+
+`trigger` 表示谁触发切换，`reason` 表示为什么切换。
+
+第一版只读 council 不一定需要产生该事件，但 schema 应先定义。
+
+## coordinator_turn_started
+
+表示 coordinator 开始一次路由、决策或总结判断。
+
+示例：
+
+```json
+{
+  "schema_version": 1,
+  "seq": 1,
+  "type": "coordinator_turn_started",
+  "phase": "discussion",
+  "session_id": "20260527-001",
+  "turn": 0,
+  "coordinator": "codex",
+  "purpose": "route"
+}
+```
+
+`purpose` 可取：
+
+```text
+route
+decide
+finalize
+```
+
+## coordinator_turn_completed
+
+表示 coordinator 的一次调用结束。它记录调用生命周期，不表达决策内容。
+
+示例：
+
+```json
+{
+  "schema_version": 1,
+  "seq": 3,
+  "type": "coordinator_turn_completed",
+  "phase": "discussion",
+  "session_id": "20260527-001",
+  "turn": 0,
+  "coordinator": "codex",
+  "purpose": "route",
+  "status": "ok",
+  "duration_ms": 5320
+}
+```
+
+`status` 可取：
+
+```text
+ok
+error
+```
+
+成功时，通常先记录 `coordinator_decided`，再用 `coordinator_turn_completed` 以 `status: "ok"` 闭合本次调用。
+
+如果 coordinator 调用或解析失败，应先记录 `coordinator_error`，再用 `coordinator_turn_completed` 以 `status: "error"` 闭合本次调用。
+
+## coordinator_decided
+
+表示 coordinator 完成一次决策。
+
+示例：
+
+```json
+{
+  "schema_version": 1,
+  "seq": 2,
+  "type": "coordinator_decided",
+  "phase": "discussion",
+  "session_id": "20260527-001",
+  "turn": 0,
+  "coordinator": "codex",
+  "decision": "continue",
+  "next_agent": "codex",
+  "role": "先建立问题框架",
+  "reason": "需要先给出结构化判断",
+  "raw_output_path": ".project-ai/sessions/20260527-001/coordinator_route_raw.md"
+}
+```
+
+`decision` 可取：
+
+```text
+continue
+finalize
+abort
+```
+
+## policy_override
+
+表示策略层覆盖 coordinator 决策。
+
+示例：
+
+```json
+{
+  "schema_version": 1,
+  "seq": 6,
+  "type": "policy_override",
+  "phase": "discussion",
+  "session_id": "20260527-001",
+  "turn": 1,
+  "policy": "min_distinct_agents",
+  "original_decision": "finalize",
+  "new_decision": "continue",
+  "selected_agent": "opencode",
+  "reason": "min_distinct_agents=2 未满足，且尚未达到 max_turns"
+}
+```
+
+`policy_override` 说明策略发生了什么；真正开始的 agent turn 仍由 `agent_turn_started` 表示。
+
+## agent_turn_started
+
+表示一个 agent 发言开始。
+
+示例：
+
+```json
+{
+  "schema_version": 1,
+  "seq": 7,
+  "type": "agent_turn_started",
+  "phase": "discussion",
+  "session_id": "20260527-001",
+  "turn": 2,
+  "agent": "opencode",
+  "role": "从实现可行性角度挑战方案",
+  "selected_by": "policy",
+  "selection_reason": "min_distinct_agents=2 未满足，强制选择尚未发言的 agent"
+}
+```
+
+`selected_by` 第一版支持：
+
+```text
+coordinator
+policy
+user
+```
+
+`user` 是未来用户手动介入讨论时的预留值。
+
+## agent_turn_completed
+
+表示 agent 发言完成。它是 runtime events 提升到 council 语义后的产物，必须携带完整回复内容，因为 `transcript.jsonl` 是唯一权威日志。
+
+示例：
+
+```json
+{
+  "schema_version": 1,
+  "seq": 9,
+  "type": "agent_turn_completed",
+  "phase": "discussion",
+  "session_id": "20260527-001",
+  "turn": 2,
+  "agent": "opencode",
+  "content": "完整回复 Markdown...",
+  "content_length": 1234,
+  "duration_ms": 18420
+}
+```
+
+replay 默认可以一次性展示 `content`。如果 debug 日志包含 `runtime.reply.delta`，未来也可以模拟流式 replay。
+
+## finalization_started
+
+表示 coordinator 开始生成当前阶段的总结。
+
+示例：
+
+```json
+{
+  "schema_version": 1,
+  "seq": 12,
+  "type": "finalization_started",
+  "phase": "discussion",
+  "session_id": "20260527-001",
+  "turn_count": 3
+}
+```
+
+## finalized
+
+表示当前 phase 收束。第一版中通常表示 discussion 收束。
+
+示例：
+
+```json
+{
+  "schema_version": 1,
+  "seq": 13,
+  "type": "finalized",
+  "phase": "discussion",
+  "session_id": "20260527-001",
+  "summary": "建议优先补齐 council 上下文压缩和策略层测试。",
+  "next_steps": [
+    "补 context compression 单元测试",
+    "补 min_distinct_agents 策略测试",
+    "更新 README 中的 council 用法"
+  ]
+}
+```
+
+`finalized` 不等于 `session_finished`。未来 discussion 收束后可以继续进入 `task_assignment` 或 `execution`。
+
+## session_finished
+
+表示整个 session 生命周期结束。
+
+示例：
+
+```json
+{
+  "schema_version": 1,
+  "seq": 14,
+  "type": "session_finished",
+  "phase": "finalized",
+  "session_id": "20260527-001",
+  "finished_at": "2026-05-27T10:03:12+08:00",
+  "outcome": "discussion_only",
+  "duration_ms": 192000,
+  "turn_count": 3,
+  "distinct_agents": ["codex", "opencode"],
+  "error_count": 0
+}
+```
+
+`outcome` 第一版建议值：
+
+```text
+discussion_only
+workplan_created
+execution_completed
+error
+cancelled
+```
+
+## 错误事件
+
+错误必须是一等事件，不能只依赖异常日志。
+
+错误事件通用字段：
+
+```text
+message
+recoverable
+action
+details
+```
+
+`action` 记录系统如何处理该错误，而不只是记录错误本身。
+
+### agent_error
+
+用于 agent 调用失败、超时、崩溃或输出不可用。
+
+```json
+{
+  "schema_version": 1,
+  "seq": 10,
+  "type": "agent_error",
+  "phase": "discussion",
+  "session_id": "20260527-001",
+  "turn": 2,
+  "agent": "opencode",
+  "message": "command timed out",
+  "recoverable": true,
+  "action": "fallback_finalize",
+  "details": {
+    "timeout_seconds": 120,
+    "exit_code": null
+  }
+}
+```
+
+### coordinator_error
+
+用于 coordinator 调用失败、决策解析失败或格式错误。
+
+```json
+{
+  "schema_version": 1,
+  "seq": 11,
+  "type": "coordinator_error",
+  "phase": "discussion",
+  "session_id": "20260527-001",
+  "turn": 2,
+  "message": "failed to parse coordinator decision",
+  "recoverable": true,
+  "action": "fallback_finalize",
+  "details": {
+    "raw_output_path": ".project-ai/sessions/20260527-001/coordinator_decide_raw.md"
+  }
+}
+```
+
+### session_error
+
+用于整个 session 无法继续。
+
+```json
+{
+  "schema_version": 1,
+  "seq": 12,
+  "type": "session_error",
+  "phase": "discussion",
+  "session_id": "20260527-001",
+  "message": "no available agents",
+  "recoverable": false,
+  "action": "abort",
+  "details": {}
+}
+```
+
+## 默认落盘策略
+
+默认写入 `transcript.jsonl`：
+
+```text
+session_started
+phase_transition
+coordinator_turn_started
+coordinator_decided
+coordinator_turn_completed
+policy_override
+agent_turn_started
+agent_turn_completed
+finalization_started
+finalized
+session_finished
+agent_error
+coordinator_error
+session_error
+```
+
+默认不写入 `transcript.jsonl`：
+
+```text
+runtime.reply.delta
+```
+
+`runtime.reply.delta` 可以在 debug 模式打开持久化，但第一版不应默认开启。
+
+## 派生文件
+
+### state.json
+
+`state.json` 是快速查询用 snapshot，主要服务：
+
+```text
+aictl session list
+aictl session status <id>
+```
+
+它可以包含：
+
+```json
+{
+  "session_id": "20260527-001",
+  "status": "done",
+  "phase": "finalized",
+  "topic": "讨论下一步优先级",
+  "started_at": "2026-05-27T10:00:00+08:00",
+  "finished_at": "2026-05-27T10:03:12+08:00",
+  "turn_count": 3,
+  "distinct_agents": ["codex", "opencode"],
+  "last_seq": 14,
+  "outcome": "discussion_only",
+  "error_count": 0
+}
+```
+
+`state.json` 必须能从 `transcript.jsonl` 重建。
+
+`status` 建议取值：
+
+```text
+running
+done
+error
+cancelled
+```
+
+### transcript.md
+
+`transcript.md` 是人类可读视图，应从 `transcript.jsonl` 渲染生成。
+
+如果 session 中断，也应能根据已有事件生成不完整 transcript，并在末尾标注错误或中断原因。
+
+## Replay 行为
+
+`aictl session replay <id>` 应读取 `transcript.jsonl`，按 `seq` 排序，然后把事件喂给和实时 CLI 相同或兼容的 renderer。
+
+默认 replay 行为：
+
+- `agent_turn_completed` 一次性展示完整 agent 回复；
+- `policy_override` 显示策略覆盖原因；
+- 错误事件显示错误和系统处理动作；
+- `phase_transition` 显示阶段切换；
+- `session_finished` 显示 outcome summary。
+
+如果 debug 日志中包含 `runtime.reply.delta`，未来可以支持模拟流式 replay。
+
+## 未来扩展：执行编排
+
+当前第一版只实现只读 council discussion。未来如果支持“AI 讨论后分工执行”，应继续使用同一个 session 事件日志，而不是另建一套日志系统。
+
+未来可增加事件：
+
+```text
+workplan_created
+task_assigned
+task_started
+task_progress
+task_completed
+task_failed
+review_started
+review_completed
+fix_requested
+```
+
+建议演进路径：
+
+```text
+1. 只读 council 可观察化
+2. 讨论后生成结构化 workplan
+3. 用户确认后执行 workplan
+4. 多 agent 分工执行、汇总和 review
+```
+
+涉及写文件时，必须由 session capability 和用户确认共同约束。

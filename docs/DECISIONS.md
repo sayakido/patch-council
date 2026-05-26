@@ -91,6 +91,99 @@ Codex 发言
 - 后续工具可以处理 `transcript.jsonl`。
 - 运行时 session 产物通常不应进入 git。
 
+## 2026-05-27：Council Session 使用事件日志作为唯一事实来源
+
+状态：已接受
+
+### 背景
+
+Council 的价值不只是最终总结，而是用户能观察多个 AI 的讨论过程。原有 `transcript.md`、`transcript.jsonl`、`state.json` 并列维护，长期容易出现状态不一致。
+
+未来还需要支持 session replay、TUI/Web UI，以及讨论后分工执行。这要求 session 生命周期有一条稳定、可重放、可审计的事件流。
+
+### 决策
+
+将 session 存储职责明确为：
+
+```text
+transcript.jsonl = 唯一权威事件日志
+state.json = 从事件流派生的当前状态快照
+transcript.md = 从事件流渲染的人类可读视图
+```
+
+事件 schema 定义在 `docs/COUNCIL_EVENTS.md`。
+
+每个事件应包含 `schema_version`、`seq`、`type`、`phase` 和 `session_id`。`session_started` 保存配置和 agent 快照；`phase_transition` 显式记录阶段切换；`session_finished` 保存最终 outcome summary。
+
+### 影响
+
+- `state.json` 可以用于快速查询，但必须能从事件日志重建。
+- `transcript.md` 不再作为独立写入目标，而应由事件日志生成。
+- CLI 实时渲染和 session replay 可以复用同一套事件 renderer。
+- 错误需要成为一等事件，例如 `agent_error`、`coordinator_error` 和 `session_error`。
+- 未来执行编排可以继续追加事件到同一个 session 日志，而不是另建日志系统。
+
+## 2026-05-27：先做 Node/TypeScript 可视化 UI Spike
+
+状态：已接受
+
+### 背景
+
+用户真正想看的不是 council 的最终结果，而是 AI 讨论的过程。继续在 Python CLI 上做复杂展示，会把精力投入到非最终产品形态上。
+
+参考 `wenwen-0617/roundtable` 后可以确认：本地 Web 圆桌方向可行，Node/JavaScript 生态适合做 session list、timeline、状态面板和后续实时 UI。
+
+### 决策
+
+下一步先做 Node/TypeScript UI spike，用 mock events 验证产品体验：
+
+```text
+session list
+discussion timeline
+work/status panel
+phase / agent / coordinator / policy / error 展示
+```
+
+暂时不接真实 Codex/OpenCode，不实现 WebSocket，不做复杂持久化。
+
+UI spike 后设置 checkpoint，再决定：
+
+```text
+路径 A：Node 全栈，Node child_process 调 AI CLI，council loop 在 Node 重写。
+路径 B：Python engine + Node UI，Python 继续跑 council，jsonl 作为语言边界。
+```
+
+### 影响
+
+- CLI 继续作为启动、调试和自动化入口，不作为主要观察界面。
+- 事件 schema 和 UI 消费体验会先被验证，再决定 runtime integration。
+- 现有 Python council loop 暂不立刻重写，也不继续深挖复杂 CLI renderer。
+
+## 2026-05-27：区分 Runtime Events 和 Council Events
+
+状态：已接受
+
+### 背景
+
+Codex、OpenCode、Claude 等 CLI 的原始输出格式不同。旧设计中的 `agent_chunk` 混入 council event，会把底层 streaming 细节和产品语义绑在一起。
+
+### 决策
+
+事件模型分为两层：
+
+```text
+runtime events = adapter 层事件，例如 runtime.reply.delta、runtime.turn.failed、runtime.approval.requested
+council events = 产品层事件，例如 coordinator_decided、agent_turn_completed、policy_override
+```
+
+adapter 先把各 AI CLI 的原始输出归一化为 runtime events，orchestrator 再提升为 council events。
+
+### 影响
+
+- `runtime.reply.delta` 取代 `agent_chunk`，用于实时 UI，不默认落盘。
+- `agent_turn_completed.content` 仍是 council log 中完整发言的事实来源。
+- approval 作为 runtime 层一等事件预留，为未来执行编排做准备。
+
 ## 2026-05-26：Coordinator 决策暂时使用 Markdown
 
 状态：已接受

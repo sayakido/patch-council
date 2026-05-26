@@ -12,6 +12,8 @@ aictl doctor
 aictl council --help
 ```
 
+这些命令检查当前 Python 原型。后续 Node/TypeScript UI spike 建立后，应在这里补充对应的 `npm` 检查命令。
+
 ## Council Smoke Test
 
 运行：
@@ -39,13 +41,25 @@ Codex 发言
   state.json
 ```
 
+存储职责：
+
+```text
+transcript.jsonl 是唯一权威事件日志
+state.json 是派生状态快照
+transcript.md 是派生可读视图
+```
+
 预期最终 state 形态：
 
 ```json
 {
+  "session_id": "<session-id>",
   "status": "done",
-  "stage": "finalized",
-  "turn_count": 3
+  "phase": "finalized",
+  "turn_count": 3,
+  "distinct_agents": ["codex", "opencode"],
+  "outcome": "discussion_only",
+  "error_count": 0
 }
 ```
 

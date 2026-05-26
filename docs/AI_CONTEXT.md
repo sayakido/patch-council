@@ -18,6 +18,8 @@ aictl "自然语言请求"
 
 - `plan`、`do`、`review`、`auto`、`continue` 这类显式命令暂时保留，用于调试、可重复工作流和底层控制。
 - 近期优先级仍然是完善 `council` loop，然后再做自然语言主入口。
+- 2026-05-27 的方向调整：如果目标是让用户看到 AI 讨论过程，主体验应转向本地可视化 UI，而不是继续在 Python CLI 上做复杂展示。
+- 下一步先做 Node/TypeScript UI spike，用 mock events 验证 session list、timeline 和 work/status panel。真实 AI CLI 集成留到 spike 后的 checkpoint 再决定。
 
 ## Council 模型
 
@@ -50,10 +52,12 @@ Council 会话保存在：
   state.json
 ```
 
-- `transcript.md`：给人阅读的完整讨论记录。
-- `transcript.jsonl`：给后续程序处理的事件流。
-- `state.json`：记录会话状态、阶段和 turn 数。
+- `transcript.jsonl`：唯一权威事件日志。
+- `state.json`：从事件流派生的当前状态快照。
+- `transcript.md`：从事件流渲染的人类可读视图。
 - 会话产物默认不进入 git。
+
+事件 schema 见 `docs/COUNCIL_EVENTS.md`。核心规则是：重要业务事实必须能从 `transcript.jsonl` 重建，`state.json` 和 `transcript.md` 都不应成为第二份真相。
 
 ## 重要实现决策
 
@@ -62,6 +66,8 @@ Council 会话保存在：
 - 每轮模型输入只使用压缩后的 Council Brief。
 - Windows 命令行长度有限，不能长期依赖一个超长命令行参数传递完整上下文。
 - `opencode run "message"` 通过 argv 方式调用是可用的，但大消息仍然需要压缩。
+- Council 后续应从黑箱 CLI 输出改成可观察事件流，实时展示 coordinator 决策、agent 发言、策略覆盖和错误处理。
+- 事件模型分为两层：runtime events 表达底层 CLI 运行状态，council events 表达产品语义。不要把 Codex/OpenCode/Claude 的原始输出直接暴露成 council event。
 
 ## 当前 Prompt 文件
 
@@ -116,8 +122,8 @@ aictl council --help
 
 ## 下一步优先级
 
-1. 给 council 上下文压缩补单元测试。
-2. 给 `min_distinct_agents` 策略补单元测试。
-3. 在 `README` 中补充 `council` 命令和配置说明。
-4. 考虑把 coordinator 决策从 Markdown 章节改为严格 JSON。
-5. 增加 council 专用的 agent 能力画像配置。
+1. 更新事件文档，明确 runtime events / council events 双层模型。
+2. 做 Node/TypeScript UI spike，用 mock council events 验证可视化体验。
+3. UI spike 后 checkpoint：决定走 Node 全栈，还是 Python engine + Node UI。
+4. 若继续推进真实运行，再实现 session store：`transcript.jsonl` 权威日志，`state.json` 派生状态。
+5. 后续补 `aictl session replay <id>`、上下文压缩测试和 `min_distinct_agents` 策略测试。

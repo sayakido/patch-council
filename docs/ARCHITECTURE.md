@@ -15,6 +15,23 @@
 
 显式命令仍然适合确定性工作流、调试和精确控制。`council` 是当前探索动态多 AI 协作的主要路径。
 
+## 体验方向
+
+Council 的核心体验应该是“看见 AI 如何讨论”，而不是只得到最终总结。
+
+因此当前方向是先做本地可视化 UI spike，而不是继续加重 CLI 渲染：
+
+```text
+Node/TypeScript UI spike
+-> mock council events
+-> session list
+-> discussion timeline
+-> work/status panel
+-> checkpoint 决定 engine 方向
+```
+
+CLI 仍然有价值，但定位应是启动、调试和自动化入口，不是主要观察界面。
+
 ## Council Loop
 
 Council loop 由 coordinator 驱动：
@@ -54,13 +71,42 @@ Council 模式当前是只读的。它可以讨论、评估和总结，但不应
   state.json
 ```
 
-`transcript.md` 用于人类阅读。
+`transcript.jsonl` 是唯一权威事件日志。
 
-`transcript.jsonl` 用于后续程序处理。
+`state.json` 是从事件流派生的当前状态快照，用于快速查询和 session list。
 
-`state.json` 记录当前状态、阶段和 turn 数。
+`transcript.md` 是从事件流渲染的人类可读视图。
+
+事件 schema 见 `docs/COUNCIL_EVENTS.md`。任何重要业务事实都应能从 `transcript.jsonl` 重建，避免多个文件各自维护状态。
 
 session 文件是运行时产物，通常不应进入 git。
+
+## 可观察事件流
+
+Council 不应只是输出最终总结。它应该把 coordinator 决策、agent 发言、策略覆盖、阶段切换和错误处理都表达成结构化事件。
+
+事件模型分为两层：
+
+```text
+runtime events：adapter 层，描述 AI CLI 的运行事实。
+council events：产品层，描述 council 的语义事实。
+```
+
+内部形态应接近：
+
+```text
+AI CLI raw output
+-> runtime adapter
+-> runtime events
+-> council orchestrator
+-> council events
+   -> JsonlSink 写 transcript.jsonl
+   -> StateSnapshotSink 更新 state.json
+   -> UI / minimal CLI printer 消费事件
+   -> session 结束后从 jsonl 生成 transcript.md
+```
+
+`runtime.reply.delta` 可用于实时流式渲染，但默认不写入 `transcript.jsonl`。`agent_turn_completed` 是 council 层完整发言事件，应写入完整回复内容，保证事件日志可以完整重建 session。
 
 ## 上下文压缩
 
@@ -87,6 +133,8 @@ codex still running as council-route (30s elapsed). last stderr: ...
 
 这样用户可以看到长时间生成、重试或重连状态。
 
+这类 heartbeat 更适合作为 CLI runtime 状态，不应默认写入核心事件日志。真正影响 session 语义的失败应记录为 `agent_error`、`coordinator_error` 或 `session_error`。
+
 ## OpenCode 集成
 
 OpenCode 当前配置围绕：
@@ -100,6 +148,8 @@ opencode:
 ```
 
 通过 Python subprocess 的 argv 方式调用时，`opencode run "message"` 可用。Windows 上需要注意 shell 引号和超长单条命令行消息。
+
+后续如果 checkpoint 选择 Node 全栈，需要用 Node `child_process` 重新验证 Codex/OpenCode 调用、流式输出、取消和错误处理。若选择 Python engine + Node UI，则以 `transcript.jsonl` 作为语言边界。
 
 ## Prompt 组织
 
