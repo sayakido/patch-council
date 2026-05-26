@@ -6,10 +6,14 @@
   "scripts": {
     "start": "node ./server.js",
     "generate:mock": "node ./scripts/generate-mock-session.js",
-    "check": "node --check ./server.js && node --check ./scripts/generate-mock-session.js && node --check ./scripts/smoke-test.js && node --check ./scripts/fake-runtime.js && node --check ./scripts/runtime-fake-check.js && node --check ./scripts/runtime-real-check.js && node --check ./src/runtime/cli-adapter.js && node --check ./src/runtime/resolve-command.js && node --check ./public/app.js",
+    "check": "node --check ./server.js && node --check ./scripts/generate-mock-session.js && node --check ./scripts/smoke-test.js && node --check ./scripts/fake-runtime.js && node --check ./scripts/runtime-fake-check.js && node --check ./scripts/runtime-real-check.js && node --check ./src/runtime/cli-adapter.js && node --check ./src/runtime/resolve-command.js && node --check ./public/app.js && node --check ./engine/config.js && node --check ./engine/prompts.js",
     "smoke": "node ./scripts/smoke-test.js",
     "runtime:fake": "node ./scripts/runtime-fake-check.js",
     "runtime:codex": "node ./scripts/runtime-real-check.js codex",
-    "runtime:opencode": "node ./scripts/runtime-real-check.js opencode"
+    "runtime:opencode": "node ./scripts/runtime-real-check.js opencode",
+    "runtime:claude": "node ./scripts/runtime-real-check.js claude"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.1"
   }
 }

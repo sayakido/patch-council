@@ -14,12 +14,18 @@ const configs = {
     args: ["run", "Reply with exactly: PatchCouncil runtime check"],
     timeoutMs: 60_000,
   },
+  claude: {
+    runtime: "claude",
+    command: "claude",
+    args: ["-p", "Reply with exactly: PatchCouncil runtime check ok", "--output-format", "stream-json", "--include-partial-messages", "--verbose", "--no-session-persistence", "--permission-mode", "bypassPermissions", "--max-budget-usd", "1"],
+    timeoutMs: 60_000,
+  },
 };
 
 async function main() {
   const config = configs[target];
   if (!config) {
-    throw new Error("usage: node ./scripts/runtime-real-check.js codex|opencode");
+    throw new Error("usage: node ./scripts/runtime-real-check.js codex|opencode|claude");
   }
 
   const events = [];
