@@ -40,6 +40,21 @@ npm run check
 npm run smoke
 ```
 
+验证 Node runtime adapter fake 矩阵：
+
+```bash
+npm run runtime:fake
+```
+
+手动验证真实 CLI：
+
+```bash
+npm run runtime:codex
+npm run runtime:opencode
+```
+
+真实 CLI 检查不在默认检查里跑，因为它依赖本机安装、登录状态、网络和模型响应时间。
+
 启动本地 UI：
 
 ```bash
