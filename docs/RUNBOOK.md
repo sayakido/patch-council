@@ -12,7 +12,45 @@ aictl doctor
 aictl council --help
 ```
 
-这些命令检查当前 Python 原型。后续 Node/TypeScript UI spike 建立后，应在这里补充对应的 `npm` 检查命令。
+这些命令检查当前 Python 原型。
+
+## UI Spike 检查
+
+Node/TypeScript UI spike 位于：
+
+```text
+apps/patchcouncil-ui
+```
+
+生成 mock session：
+
+```bash
+npm run generate:mock
+```
+
+做语法检查：
+
+```bash
+npm run check
+```
+
+做 HTTP smoke test：
+
+```bash
+npm run smoke
+```
+
+启动本地 UI：
+
+```bash
+npm run start
+```
+
+默认地址：
+
+```text
+http://127.0.0.1:8765
+```
 
 ## Council Smoke Test
 

@@ -5,6 +5,8 @@ __pycache__/
 .idea/
 dist/
 build/
+node_modules/
+.logs/
 .project-ai/tasks/*
 !.project-ai/tasks/.gitkeep
 .project-ai/sessions/*

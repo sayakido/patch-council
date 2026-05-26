@@ -1,0 +1,16 @@
+{
+  "session_id": "mock-council-001",
+  "status": "done",
+  "phase": "finalized",
+  "topic": "下一步应该优先改进 PatchCouncil 的什么？",
+  "started_at": "2026-05-27T10:00:00+08:00",
+  "finished_at": "2026-05-27T10:03:12+08:00",
+  "turn_count": 2,
+  "distinct_agents": [
+    "codex",
+    "opencode"
+  ],
+  "last_seq": 14,
+  "outcome": "discussion_only",
+  "error_count": 0
+}
