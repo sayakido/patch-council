@@ -22,7 +22,9 @@ aictl "自然语言请求"
 - Node/TypeScript UI spike 已完成：mock session list、discussion timeline 和 work/status panel 已跑通。
 - Node runtime adapter spike 已完成：fake runtime 矩阵 + 真实 `codex --help` 已通过 Node adapter。
 - `opencode` 已卸载，决定替换为 `claude`（Claude Code CLI）。Claude Code CLI 原生支持 `--output-format stream-json`，与 Codex 的 `--json` 一样可直接对接 adapter 的 JSONL 解析。
-- 下一步：验证 `claude` 通过 runtime adapter（`npm run runtime:claude`），然后正式推进 Node 全栈实现。
+- Step 0 完成：`npm run runtime:claude` 验证通过（需 `--verbose` 配合 `--output-format stream-json`）。三个 runtime check 全部通过。
+- Step 1 完成：engine/config.js（YAML 配置加载 + 默认值合并）、engine/prompts.js（`{{ variable }}` 模板替换）、4 个 council prompt 模板已从 Python 复制到 engine/prompts/。
+- 当前：Step 2 Session Store 实现中。
 
 ## Council 模型
 
@@ -82,7 +84,7 @@ council_challenge.md
 council_synthesis.md
 ```
 
-当前有效的 council prompt：
+当前有效的 council prompt（在 `engine/prompts/`）：
 
 ```text
 council_route.md
