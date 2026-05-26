@@ -19,7 +19,9 @@ aictl "自然语言请求"
 - `plan`、`do`、`review`、`auto`、`continue` 这类显式命令暂时保留，用于调试、可重复工作流和底层控制。
 - 近期优先级仍然是完善 `council` loop，然后再做自然语言主入口。
 - 2026-05-27 的方向调整：如果目标是让用户看到 AI 讨论过程，主体验应转向本地可视化 UI，而不是继续在 Python CLI 上做复杂展示。
-- 下一步先做 Node/TypeScript UI spike，用 mock events 验证 session list、timeline 和 work/status panel。真实 AI CLI 集成留到 spike 后的 checkpoint 再决定。
+- Node/TypeScript UI spike 已完成：mock session list、discussion timeline 和 work/status panel 已跑通。
+- Node runtime adapter spike 已完成：fake runtime 矩阵通过，真实 `codex --help` 已通过 Node adapter；真实 `opencode` 当前未验证，因为当前 shell 找不到 `opencode`。
+- 当前倾向：继续评估 Node 全栈路线，但 OpenCode 真实调用仍是 checkpoint 风险点。
 
 ## Council 模型
 
@@ -122,8 +124,7 @@ aictl council --help
 
 ## 下一步优先级
 
-1. 更新事件文档，明确 runtime events / council events 双层模型。
-2. 做 Node/TypeScript UI spike，用 mock council events 验证可视化体验。
-3. UI spike 后 checkpoint：决定走 Node 全栈，还是 Python engine + Node UI。
-4. 若继续推进真实运行，再实现 session store：`transcript.jsonl` 权威日志，`state.json` 派生状态。
-5. 后续补 `aictl session replay <id>`、上下文压缩测试和 `min_distinct_agents` 策略测试。
+1. 先解决真实 OpenCode 可执行文件发现问题，跑通 `npm run runtime:opencode`。
+2. 若 OpenCode 真实调用通过，继续 Node 全栈方向：实现 session store，把 runtime events 提升为 council events。
+3. 若 OpenCode 在 Node adapter 下不稳定，再回到 Python engine + Node UI，使用 `transcript.jsonl` 作为语言边界。
+4. 后续补 `aictl session replay <id>` 或 UI replay、上下文压缩测试和 `min_distinct_agents` 策略测试。

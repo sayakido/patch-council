@@ -55,6 +55,14 @@ npm run runtime:opencode
 
 真实 CLI 检查不在默认检查里跑，因为它依赖本机安装、登录状态、网络和模型响应时间。
 
+当前记录：
+
+```text
+npm run runtime:fake   已通过
+npm run runtime:codex  已通过，验证 codex --help
+npm run runtime:opencode 当前未验证，当前 shell 找不到 opencode
+```
+
 启动本地 UI：
 
 ```bash

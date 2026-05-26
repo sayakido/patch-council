@@ -184,6 +184,58 @@ adapter 先把各 AI CLI 的原始输出归一化为 runtime events，orchestrat
 - `agent_turn_completed.content` 仍是 council log 中完整发言的事实来源。
 - approval 作为 runtime 层一等事件预留，为未来执行编排做准备。
 
+## 2026-05-27：Node Runtime Adapter Spike 通过 Fake 矩阵和 Codex 轻量验证
+
+状态：已接受
+
+### 背景
+
+Node 全栈路线的最大风险不是 council loop 本身，而是 Node 是否能可靠替代 Python 的 subprocess/streaming adapter。
+
+需要重点验证：
+
+```text
+Windows 命令解析
+.cmd/.exe/.bat/.ps1 后缀发现
+argv 调用，避免 shell 引号问题
+stdout/stderr 流式读取
+超时和进程清理
+进程崩溃映射为 runtime.turn.failed
+真实 Codex/OpenCode CLI 兼容性
+```
+
+### 决策
+
+新增 Node runtime adapter spike：
+
+```text
+apps/patchcouncil-ui/src/runtime/cli-adapter.js
+apps/patchcouncil-ui/src/runtime/resolve-command.js
+```
+
+fake runtime 覆盖：
+
+```text
+正常流式输出
+纯文本输出
+进程崩溃
+超时
+```
+
+真实 CLI 验证结果：
+
+```text
+npm run runtime:codex    已通过，验证 codex.cmd 发现和 codex --help 流式读取
+npm run runtime:opencode 未验证，当前 shell 找不到 opencode
+```
+
+### 影响
+
+- Node adapter 已经证明可以覆盖核心进程行为和 Codex 轻量调用。
+- OpenCode 仍是 checkpoint 风险，下一步应先解决 PATH/安装发现，再跑 `npm run runtime:opencode`。
+- 在 OpenCode 验证前，不应正式宣布 Node 全栈路线完全确定。
+- 当前倾向仍是继续推进 Node 全栈；若 OpenCode 在 Node 下不稳定，再退回 Python engine + Node UI。
+
 ## 2026-05-26：Coordinator 决策暂时使用 Markdown
 
 状态：已接受

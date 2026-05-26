@@ -4,14 +4,14 @@
 
 ## 现在
 
-1. 修订 `docs/COUNCIL_EVENTS.md`，明确 runtime events / council events 双层模型。
-2. 做 Node/TypeScript UI spike，使用 mock council events。
-3. UI spike 覆盖 session list、discussion timeline、work/status panel。
-4. 在 spike 后设置 checkpoint，决定 Node 全栈还是 Python engine + Node UI。
+1. 解决当前 shell 找不到 `opencode` 的问题。
+2. 跑通 `npm run runtime:opencode`，验证 Node adapter 对 OpenCode 的真实兼容性。
+3. 如果 OpenCode 验证通过，继续 Node 全栈方向。
+4. 如果 OpenCode 验证不稳定，选择 Python engine + Node UI，以 `transcript.jsonl` 作为语言边界。
 
 ## 接下来
 
-1. 如果 checkpoint 选择继续真实集成，实现 session store：
+1. 如果 checkpoint 选择继续 Node 全栈，实现 session store：
 
 ```text
 transcript.jsonl
@@ -19,7 +19,7 @@ state.json
 transcript.md
 ```
 
-2. 实现 runtime adapter integration：
+2. 实现 council orchestrator spike：
 
 ```text
 Codex/OpenCode raw output
