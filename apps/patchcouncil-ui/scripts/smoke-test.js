@@ -71,8 +71,11 @@ async function main() {
       throw new Error("expected at least one mock session");
     }
     const html = await fetchText("/");
-    if (!html.includes("PatchCouncil UI Spike")) {
-      throw new Error("index html did not render expected title");
+    if (!html.includes("PatchCouncil Workbench")) {
+      throw new Error("index html did not render workbench title");
+    }
+    if (!html.includes("composerInput")) {
+      throw new Error("index html missing workbench composer");
     }
 
     // GET /api/config

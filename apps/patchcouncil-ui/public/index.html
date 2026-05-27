@@ -3,16 +3,17 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>PatchCouncil UI Spike</title>
+    <title>PatchCouncil Workbench</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
+    <!-- Left sidebar: sessions list -->
     <aside class="sidebar">
       <div class="brand">
         <div class="mark">PC</div>
         <div>
           <h1>PatchCouncil</h1>
-          <p>UI Spike</p>
+          <p>Workbench</p>
         </div>
       </div>
       <div class="sessions-header">
@@ -20,42 +21,45 @@
         <button id="refreshButton" type="button">Refresh</button>
       </div>
       <nav id="sessionList" class="session-list" aria-label="Session list"></nav>
+      <div style="margin-top:12px">
+        <button id="newCouncilButton" type="button">+ New</button>
+      </div>
     </aside>
 
-    <main class="workspace">
-      <section class="topbar">
-        <div>
-          <p class="eyebrow">Council Session</p>
-          <h2 id="sessionTitle">No session selected</h2>
-        </div>
+    <!-- Center: chat workspace -->
+    <main id="workspace" class="workspace idle">
+      <header class="thread-header">
+        <p class="eyebrow">Council Thread</p>
+        <h2 id="sessionTitle">New Council</h2>
         <div id="phaseBadge" class="phase-badge">idle</div>
-      </section>
-
-      <section class="content-grid">
-        <section class="timeline-panel">
-          <div class="panel-heading">
-            <h3>Discussion Timeline</h3>
-            <span id="eventCount">0 events</span>
-          </div>
-          <ol id="timeline" class="timeline"></ol>
-        </section>
-
-        <aside class="status-panel">
-          <div class="panel-heading">
-            <h3>Work Status</h3>
-          </div>
-          <dl id="statusGrid" class="status-grid"></dl>
-          <div class="status-section">
-            <h4>Agents</h4>
-            <div id="agentList" class="agent-list"></div>
-          </div>
-          <div class="status-section">
-            <h4>Latest Signal</h4>
-            <p id="latestSignal" class="latest-signal">No events loaded.</p>
-          </div>
-        </aside>
-      </section>
+      </header>
+      <section id="threadBody" class="thread-body"></section>
+      <form id="composerForm" class="composer">
+        <textarea id="composerInput" placeholder="输入讨论主题..." rows="2"></textarea>
+        <button id="composerButton" class="primary" type="submit">Start Council</button>
+      </form>
     </main>
+
+    <!-- Right: status panel -->
+    <aside class="status-panel">
+      <div class="panel-heading"><h3>Status</h3></div>
+      <dl id="statusGrid" class="status-grid"></dl>
+      <div class="status-section">
+        <h4>Agents</h4>
+        <div id="agentList" class="agent-list"></div>
+      </div>
+      <div class="status-section">
+        <h4>Latest Signal</h4>
+        <p id="latestSignal" class="latest-signal">No events loaded.</p>
+      </div>
+      <div class="status-section">
+        <button id="cancelButton" type="button" class="hidden">Cancel Session</button>
+      </div>
+      <div class="status-section">
+        <button id="rawEventsButton" type="button">Raw events</button>
+        <ol id="rawEvents" class="raw-events hidden"></ol>
+      </div>
+    </aside>
 
     <script src="/app.js"></script>
   </body>
