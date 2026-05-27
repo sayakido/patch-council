@@ -13,37 +13,11 @@
 - ~~Step 0: Runtime Verification~~ ✓ 完成（fake / codex / claude 全部通过）
 - ~~Step 1: Engine Config & Prompts~~ ✓ 完成（engine/config.js + engine/prompts.js + 4 个 council prompt 模板）
 - ~~Step 1.5: Adapter Input + Config Alignment~~ ✓ 完成（input/input_mode、Codex stdin、Claude stream-json args、README 对齐）
+- ~~Step 2+3: Session Store + Council Engine~~ ✓ 完成（engine/events.js + session-store.js + council.js + event-sink.js + prompts JSON 化）
+- ~~Step 4: CLI Entry Point~~ ✓ 完成（cli/cli.js）
+- ~~Step 5: UI Real-Time~~ ✓ 完成（server.js ?since= 增量轮询 + app.js 3s 自动轮询）
 
 马上要做（按顺序）：
-
-Step 2+3: Session Store + Council Engine（先对齐接口，再分别实现）
-  这两个模块互相依赖，先一起设计接口，再各自实现，避免返工。
-
-  接口设计（先做）：
-    - SessionStore 写入接口：createSession / appendEvent
-    - CouncilEngine 事件发射接口：emit(event) 的 event 类型和字段
-    - 对齐后确认两端不需要对方未定义的行为
-
-  Step 2 实现：engine/session-store.js
-    - createSession / appendEvent（每事件一行，立即 flush）
-    - deriveState（从 jsonl 重建 state.json）
-    - generateTranscript（从 jsonl 生成 transcript.md）
-    - readEvents（按 seq 排序读取）
-
-  Step 3 实现：engine/council.js + engine/event-sink.js
-    - port council.py 的 loop 逻辑，使用 EventEmitter
-    - JsonlSink / StateSnapshotSink / CliRendererSink
-    - 引擎 fan-out: emit(event) → 三个 sink 各自消费
-    - coordinator 决策直接使用 JSON（不从 Markdown 迁移）
-    - 必须包含 fake runtime 集成测试，覆盖 council loop 状态机
-
-Step 4: CLI Entry Point
-  新建 cli/cli.js — 只实现 `council "topic"` 子命令
-    session list/show/replay 已由 Web UI 覆盖，不重复实现
-
-Step 5: UI Real-Time
-  修改 server.js  — 增加 GET /api/sessions/:id/events?since=<seq> 增量轮询
-  修改 public/app.js — running session 自动轮询（3s），新事件追加到 timeline
 
 工作量预估：
 
@@ -52,10 +26,10 @@ Step 5: UI Real-Time
 | 0. Runtime Verification | 15min | ✓ 完成 |
 | 1. Config & Prompts | 30min | ✓ 完成 |
 | 1.5. Adapter Input + Config Alignment | 30-45min | ✓ 完成 |
-| 2+3. Session Store + Council Engine | 3-4h | 当前 |
-| 4. CLI Entry | 15min | |
-| 5. UI Real-Time | 30min | |
-| **合计** | **5-6.5h** | |
+| 2+3. Session Store + Council Engine | 3-4h | ✓ 完成 |
+| 4. CLI Entry | 15min | ✓ 完成 |
+| 5. UI Real-Time | 30min | ✓ 完成 |
+| **合计** | **5-6.5h** | ✓ 完成 |
 
 ## PR 拆分
 
@@ -65,17 +39,15 @@ Step 5: UI Real-Time
 
 纯前置修补，不引入新逻辑。已改 cli-adapter、config、runtime-check、README，独立可测。
 
-**PR #2：Step 2+3+4+5 全栈联动（~800-1200 行）**
+**PR #2：Step 2+3+4+5 全栈联动（已完成，~1700 行）**
 
-engine + session store + CLI + UI 互相依赖：
+已交付 6 个新文件 + 6 个修改文件：
 - 新增 `engine/events.js`、`engine/session-store.js`、`engine/council.js`、`engine/event-sink.js`
 - 新增 `cli/cli.js`
-- 新增 `scripts/council-smoke.js`（fake runtime 集成测试）
-- 修改 `engine/prompts/`（JSON 输出）、`server.js`、`public/app.js`
+- 新增 `scripts/council-smoke.js`（7 个 fake runtime 集成测试）
+- 修改 `engine/prompts/`（JSON 输出）、`server.js`（增量轮询）、`public/app.js`（自动轮询）
 
-拆开的话中间 PR 没有可运行状态，review 反而困难。作为单个 PR review ~1000 行是合理范围。
-
-完成后总代码量预计从当前 1208 行增长到 ~2000-2500 行。
+完成后总代码量从 1208 行增长到 ~2900 行。
 
 ## 以后
 

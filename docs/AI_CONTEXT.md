@@ -25,7 +25,7 @@ aictl "自然语言请求"
 - Step 0 完成：`npm run runtime:claude` 验证通过（需 `--verbose` 配合 `--output-format stream-json`）。三个 runtime check 全部通过。
 - Step 1 完成：engine/config.js（YAML 配置加载 + 默认值合并）、engine/prompts.js（`{{ variable }}` 模板替换）、4 个 council prompt 模板已从 Python 复制到 engine/prompts/。
 - Step 1.5 完成：`runCliRuntime` 已支持 `input` / `input_mode`，`codex exec --json ... -` stdin 路径和 Claude `-p ... --output-format stream-json` argument 路径都已真实测通。
-- 当前：进入 Step 2+3（Session Store + Council Engine 联合设计）。先对齐事件类型、SessionStore 写入接口和 CouncilEngine `emit(event)` 接口，再分别实现。
+- Step 2+3+4+5 完成：council engine、session store、CLI 入口、Web UI 实时轮询全部交付。`npm run smoke` 含 7 个 fake runtime 集成测试。
 
 ## Council 模型
 
@@ -116,21 +116,24 @@ council:
 
 ## 已验证命令
 
-当前迭代中已经跑通过：
-
+Python 原型：
 ```bash
 python -m compileall -q src
 aictl doctor
 aictl council --help
-npm run check
-npm run smoke
-npm run runtime:fake
-npm run runtime:codex
-npm run runtime:claude
 ```
 
-加入上下文压缩后，也跑通过了一次真实 council smoke test。`runtime:codex` 验证的是 `codex exec --json --sandbox read-only --ephemeral -` stdin 输入；`runtime:claude` 验证的是 Claude Code CLI stream-json + argument 输入。
+Node 全栈（`apps/patchcouncil-ui/`）：
+```bash
+npm run check            # 17 JS 文件语法检查
+npm run smoke            # HTTP smoke + 7 council engine 集成测试
+npm run start            # Web UI（http://127.0.0.1:8765）
+npm run runtime:fake     # fake runtime 矩阵
+npm run runtime:codex    # 真实 Codex CLI 验证
+npm run runtime:claude   # 真实 Claude CLI 验证
+node cli/cli.js council "话题"   # 真实 council 讨论
+```
 
 ## 下一步优先级
 
-见 `docs/ROADMAP.md`。当前阶段：Node 全栈实现，详见路线图。
+见 `docs/ROADMAP.md`。Node 全栈核心实现已完成（Steps 0-5），下一步进入"以后"阶段（workplan 生成、自然语言入口、分工执行）。

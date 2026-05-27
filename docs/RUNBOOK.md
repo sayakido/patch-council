@@ -95,7 +95,7 @@ Codex 发言
 -> coordinator finalize
 ```
 
-## Council Smoke Test (Node 全栈，待实现)
+## Council Smoke Test (Node 全栈)
 
 ```bash
 cd apps/patchcouncil-ui
