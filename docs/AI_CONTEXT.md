@@ -12,16 +12,18 @@
 
 ## 当前产品方向
 
-- 长期主入口希望接近：
+- 当前主入口是本地 Web Workbench：
 
 ```bash
-aictl "自然语言请求"
+cd apps/patchcouncil-ui
+npm run start
+# http://127.0.0.1:8765
 ```
 
-- `plan`、`do`、`review`、`auto`、`continue` 这类显式命令暂时保留，用于调试、可重复工作流和底层控制。
-- 近期优先级仍然是完善 `council` loop，然后再做自然语言主入口。
-- 2026-05-27 的方向调整：如果目标是让用户看到 AI 讨论过程，主体验应转向本地可视化 UI，而不是继续在 Python CLI 上做复杂展示。
-- Node/TypeScript UI spike 已完成：mock session list、discussion timeline 和 work/status panel 已跑通。
+- Node CLI 保留为开发、调试和自动化入口，不再是用户主路径。
+- Python `src/aictl/` 是历史原型/参考实现，不再承接新功能。
+- 后续自然语言主入口应优先落在 Workbench 体验中，而不是恢复 Python CLI 主路径。
+- 2026-05-28 的方向调整：Workbench 成为主入口，支持创建、观察、Host 插话、取消和 Continue/Fork council session。
 - Node runtime adapter spike 已完成：fake runtime 矩阵 + 真实 Codex/Claude 检查已通过 Node adapter。
 - `opencode` 已卸载，决定替换为 `claude`（Claude Code CLI）。Claude Code CLI 原生支持 `--output-format stream-json`，与 Codex 的 `--json` 一样可直接对接 adapter 的 JSONL 解析。
 - Step 0 完成：`npm run runtime:claude` 验证通过（需 `--verbose` 配合 `--output-format stream-json`）。三个 runtime check 全部通过。
@@ -130,6 +132,8 @@ python -m compileall -q src
 aictl doctor
 aictl council --help
 ```
+
+这些命令仅用于检查历史 Python 原型，不代表当前产品主路径。
 
 Node 全栈（`apps/patchcouncil-ui/`）：
 ```bash

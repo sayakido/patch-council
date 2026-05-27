@@ -41,12 +41,12 @@ council events：orchestrator / 产品层，描述 council 语义发生了什么
 推荐流向：
 
 ```text
-Codex / OpenCode / Claude 原始输出
+Codex / Claude 原始输出
 -> runtime adapter
 -> runtime events
 -> council orchestrator
 -> council events
--> transcript.jsonl / state.json / UI
+-> transcript.jsonl / state.json / Web Workbench
 ```
 
 不要把不同 CLI 的原始输出格式直接暴露成 council event。底层差异应先由 runtime adapter 归一化。
@@ -148,7 +148,7 @@ debug 模式可以选择持久化。
 
 ### runtime.approval.requested
 
-表示 runtime 请求用户批准某个动作。即使第一版 UI spike 不实现审批，也应在 schema 中预留。
+表示 runtime 请求用户批准某个动作。Workbench v1 仍保持只读 council，不实现执行审批，但 schema 中预留该能力。
 
 ```json
 {
@@ -239,7 +239,7 @@ session_finished 才表示整个 session 生命周期结束。
 
 ## Council Event 类型
 
-第一版 council event 集合：
+当前 council event 集合：
 
 ```text
 session_started
@@ -250,6 +250,8 @@ coordinator_turn_completed
 policy_override
 agent_turn_started
 agent_turn_completed
+user_interjection
+session_cancel_requested
 finalization_started
 finalized
 session_finished
@@ -275,11 +277,29 @@ session_error
   "topic": "讨论下一步优先级",
   "mode": "council",
   "config": {
-    "max_turns": 3,
-    "min_distinct_agents": 2,
-    "max_context_chars": 2500,
-    "max_transcript_chars": 2500,
-    "max_message_chars": 800
+    "council": {
+      "max_turns": 3,
+      "min_distinct_agents": 2,
+      "max_context_chars": 2500,
+      "max_transcript_chars": 2500,
+      "max_message_chars": 800
+    },
+    "agents": {
+      "codex": {
+        "command": "codex",
+        "input_mode": "stdin",
+        "capabilities": ["plan", "synthesize", "review", "judge"],
+        "roles": ["coordinator", "agent"],
+        "enabled": true
+      },
+      "claude": {
+        "command": "claude",
+        "input_mode": "argument",
+        "capabilities": ["challenge", "implement", "fix"],
+        "roles": ["agent"],
+        "enabled": true
+      }
+    }
   },
   "capabilities": {
     "can_execute": false,
@@ -300,7 +320,17 @@ session_error
 }
 ```
 
-`session_started` 保存配置和 agent 快照。replay 旧 session 时，不应依赖当前配置文件。
+`session_started` 保存启动时配置和 agent 快照。replay 旧 session 时，不应依赖当前配置文件。`/config` 修改只影响之后新建的 session，不热更新 running session。
+
+Continue/Fork session 可以额外包含 source metadata：
+
+```json
+{
+  "source_session_id": "20260527-001",
+  "source_summary": "上一轮 council 已确认 Workbench v1 使用聊天式 UI。",
+  "source_transcript_path": ".project-ai/sessions/20260527-001/transcript.jsonl"
+}
+```
 
 ## phase_transition
 
@@ -494,6 +524,45 @@ user
 
 replay 默认可以一次性展示 `content`。如果 debug 日志包含 `runtime.reply.delta`，未来也可以模拟流式 replay。
 
+## user_interjection
+
+表示 Host 在 running session 中追加的指令。它是 council 层事件，默认落盘。Interjection 不打断当前正在运行的 agent 或 coordinator 调用；engine 在下一个安全决策点把它纳入 Council Brief。
+
+示例：
+
+```json
+{
+  "schema_version": 1,
+  "seq": 10,
+  "type": "user_interjection",
+  "phase": "discussion",
+  "session_id": "20260527-001",
+  "turn": 2,
+  "content": "请把取消语义也纳入讨论。",
+  "created_at": "2026-05-27T10:02:20+08:00"
+}
+```
+
+Workbench 默认把该事件投影为右侧 Host 气泡。
+
+## session_cancel_requested
+
+表示 Host 请求取消 running session。取消对 UI 立即生效，runtime 终止是 best-effort。该事件出现后，engine 不应再启动新的 coordinator 或 agent turn；当前调用返回或被终止后，session 以 `outcome: "cancelled"` 收束。
+
+示例：
+
+```json
+{
+  "schema_version": 1,
+  "seq": 11,
+  "type": "session_cancel_requested",
+  "phase": "discussion",
+  "session_id": "20260527-001",
+  "requested_at": "2026-05-27T10:02:40+08:00",
+  "reason": "user"
+}
+```
+
 ## finalization_started
 
 表示 coordinator 开始生成当前阶段的总结。
@@ -657,6 +726,8 @@ coordinator_turn_completed
 policy_override
 agent_turn_started
 agent_turn_completed
+user_interjection
+session_cancel_requested
 finalization_started
 finalized
 session_finished
@@ -708,6 +779,7 @@ aictl session status <id>
 
 ```text
 running
+cancelling
 done
 error
 cancelled
@@ -726,6 +798,8 @@ cancelled
 默认 replay 行为：
 
 - `agent_turn_completed` 一次性展示完整 agent 回复；
+- `user_interjection` 展示为 Host 消息；
+- `session_cancel_requested` 展示取消请求和后续 cancelled outcome；
 - `policy_override` 显示策略覆盖原因；
 - 错误事件显示错误和系统处理动作；
 - `phase_transition` 显示阶段切换；
