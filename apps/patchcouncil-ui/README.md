@@ -12,11 +12,11 @@
 
 当前不做：
 
-- 不接真实 Codex/OpenCode；
+- 不接真实 council loop；
 - 不做 WebSocket；
 - 不做复杂持久化；
 - 不重写现有 Python council loop。
-- 不默认调用真实 Codex/OpenCode。
+- 不默认调用真实 Codex/Claude。
 
 ## 运行
 
@@ -44,7 +44,7 @@ npm run runtime:fake
 
 ```powershell
 npm run runtime:codex
-npm run runtime:opencode
+npm run runtime:claude
 ```
 
 这些命令会调用本机真实 AI CLI，可能需要登录状态、网络或较长等待。
@@ -53,7 +53,7 @@ npm run runtime:opencode
 
 - `npm run runtime:fake` 覆盖正常完成、超时、进程崩溃、流式输出和纯文本输出。
 - `npm run runtime:codex` 已验证 `codex --help` 可通过 Node adapter 解析 `.cmd` 并流式读取。
-- `npm run runtime:opencode` 依赖本机 PATH 中存在 `opencode`，当前未纳入默认检查。
+- `npm run runtime:claude` 已验证 Claude Code CLI `stream-json` 输出。
 
 ## 目录
 

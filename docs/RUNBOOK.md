@@ -60,7 +60,7 @@ npm run runtime:claude
 ```text
 npm run runtime:fake    已通过
 npm run runtime:codex   已通过，验证 codex --help
-npm run runtime:claude  待验证（opencode 已卸载，替换为 claude）
+npm run runtime:claude  已通过，验证 claude stream-json
 ```
 
 启动本地 UI：

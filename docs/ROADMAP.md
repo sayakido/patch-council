@@ -9,26 +9,34 @@
 - UI spike 已完成（mock session list、discussion timeline、work/status panel）
 - Runtime adapter spike 已完成（fake 矩阵 + `codex --help` 通过）
 - `opencode` 已卸载，决定替换为 `claude`（Claude Code CLI）
-- 两个 CLI 都有原生 JSON 流式输出：Codex `--json`、Claude `--output-format stream-json`
+- 两个 CLI 都有原生 JSON 流式输出：Codex `exec --json`、Claude `--output-format stream-json`
 - ~~Step 0: Runtime Verification~~ ✓ 完成（fake / codex / claude 全部通过）
 - ~~Step 1: Engine Config & Prompts~~ ✓ 完成（engine/config.js + engine/prompts.js + 4 个 council prompt 模板）
 
 马上要做（按顺序）：
 
+Step 1.5: Adapter Input + Config Alignment
+  修正进入真实 council engine 前的前置能力：
+    - 给 runCliRuntime 增加 input / input_mode 支持
+    - 验证 codex exec --json ... stdin 路径，而不只是 codex --help
+    - 同步 claude 默认 args 为 stream-json 参数
+    - README 从 OpenCode 旧说法改成 Claude
+    - 忽略 .claude/ 本地权限文件
+
 Step 2: Session Store
-  新建 engine/session-store.ts
+  新建 engine/session-store.js
     - createSession / appendEvent（每事件一行，立即 flush）
     - deriveState（从 jsonl 重建 state.json）
     - generateTranscript（从 jsonl 生成 transcript.md）
     - readEvents（按 seq 排序读取）
 
 Step 3: Council Engine
-  新建 engine/council.ts  — port council.py 的 loop 逻辑，使用 EventEmitter
-  新建 engine/event-sink.ts — JsonlSink / StateSnapshotSink / CliRendererSink
+  新建 engine/council.js  — port council.py 的 loop 逻辑，使用 EventEmitter
+  新建 engine/event-sink.js — JsonlSink / StateSnapshotSink / CliRendererSink
   引擎 fan-out: emit(event) → 三个 sink 各自消费
 
 Step 4: CLI Entry Point
-  新建 cli/cli.ts — 只实现 `council "topic"` 子命令
+  新建 cli/cli.js — 只实现 `council "topic"` 子命令
     session list/show/replay 已由 Web UI 覆盖，不重复实现
 
 Step 5: UI Real-Time
@@ -41,11 +49,12 @@ Step 5: UI Real-Time
 |---|---|---|
 | 0. Runtime Verification | 15min | ✓ 完成 |
 | 1. Config & Prompts | 30min | ✓ 完成 |
-| 2. Session Store | 45min | 当前 |
+| 1.5. Adapter Input + Config Alignment | 30-45min | 当前 |
+| 2. Session Store | 45min | |
 | 3. Council Engine | 1.5-2h | |
 | 4. CLI Entry | 10min | |
 | 5. UI Real-Time | 30min | |
-| **合计** | **3.5-4h** |
+| **合计** | **4-5h** | |
 
 ## 以后
 

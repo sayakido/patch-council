@@ -24,7 +24,7 @@ aictl "自然语言请求"
 - `opencode` 已卸载，决定替换为 `claude`（Claude Code CLI）。Claude Code CLI 原生支持 `--output-format stream-json`，与 Codex 的 `--json` 一样可直接对接 adapter 的 JSONL 解析。
 - Step 0 完成：`npm run runtime:claude` 验证通过（需 `--verbose` 配合 `--output-format stream-json`）。三个 runtime check 全部通过。
 - Step 1 完成：engine/config.js（YAML 配置加载 + 默认值合并）、engine/prompts.js（`{{ variable }}` 模板替换）、4 个 council prompt 模板已从 Python 复制到 engine/prompts/。
-- 当前：Step 2 Session Store 实现中。
+- 当前：Step 1.5 Adapter Input + Config Alignment。先补 `runCliRuntime` 的 `input` / `input_mode`，验证 `codex exec --json ... stdin`，并把 Claude 默认 args 和 README 对齐，再进入 Session Store。
 
 ## Council 模型
 
@@ -70,7 +70,7 @@ Council 会话保存在：
 - 完整 transcript 保存在磁盘，但不要在每轮模型调用时重新塞入完整 transcript。
 - 每轮模型输入只使用压缩后的 Council Brief。
 - Windows 命令行长度有限，不能长期依赖一个超长命令行参数传递完整上下文。
-- `opencode run "message"` 通过 argv 方式调用是可用的，但大消息仍然需要压缩。`claude -p "message"` 是替代方案，原生支持 `--output-format stream-json --include-partial-messages`。
+- `opencode` 已从计划中移除。`claude -p "message"` 是替代方案，原生支持 `--output-format stream-json --include-partial-messages`。
 - Council 后续应从黑箱 CLI 输出改成可观察事件流，实时展示 coordinator 决策、agent 发言、策略覆盖和错误处理。
 - 事件模型分为两层：runtime events 表达底层 CLI 运行状态，council events 表达产品语义。不要把 Codex/Claude 的原始输出直接暴露成 council event。
 
