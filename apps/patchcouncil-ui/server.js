@@ -2,7 +2,12 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const url = require("node:url");
-const { findProjectRoot } = require("./engine/config");
+const { findProjectRoot, loadConfig } = require("./engine/config");
+const { SessionStore } = require("./engine/session-store");
+const { CouncilEngine } = require("./engine/council");
+const { JsonlSink, StateSnapshotSink } = require("./engine/event-sink");
+const { runCliRuntime } = require("./src/runtime/cli-adapter");
+const prompts = require("./engine/prompts");
 
 const root = __dirname;
 const publicDir = path.join(root, "public");
@@ -44,6 +49,54 @@ function safeJoin(base, requestPath) {
     return null;
   }
   return resolved;
+}
+
+const activeSessions = new Map();
+
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 1024 * 1024) {
+        reject(new Error("request body too large"));
+        req.destroy();
+      }
+    });
+    req.on("end", () => {
+      if (!body.trim()) return resolve({});
+      try { resolve(JSON.parse(body)); } catch (error) { reject(new Error("invalid JSON body")); }
+    });
+    req.on("error", reject);
+  });
+}
+
+function makeRuntimeRunner(projectRoot, activeSession) {
+  return async (agentName, agentConfig, prompt) => {
+    if (process.env.PATCHCOUNCIL_FAKE_RUNTIME === "1") {
+      // small delay so smoke tests can send interjections/cancel before engine finishes
+      await new Promise((r) => setTimeout(r, 50));
+      return { ok: true, text: `Fake response from ${agentName}: received prompt (${prompt.length} chars)` };
+    }
+
+    const turnId = `${activeSession.sessionId}-${agentName}-${Date.now()}`;
+    const runtime = runCliRuntime({
+      runtime: agentName,
+      command: agentConfig.command,
+      args: agentConfig.args || [],
+      input: prompt,
+      input_mode: agentConfig.input_mode,
+      cwd: projectRoot,
+      timeoutMs: (agentConfig.timeout_sec || 1800) * 1000,
+      threadId: `${activeSession.sessionId}-thread`,
+      turnId,
+    });
+
+    activeSession.currentRun = runtime;
+    const result = await runtime.done;
+    activeSession.currentRun = null;
+    return result;
+  };
 }
 
 function listSessionsFrom(rootDir) {
@@ -111,18 +164,128 @@ function readSessionEvents(sessionId, sinceSeq = -1) {
   return events;
 }
 
-function handleApi(req, res, parsed) {
+async function handleApi(req, res, parsed) {
   const pathname = decodeURIComponent(parsed.pathname || "/");
   const query = parsed.query || {};
 
-  if (pathname === "/api/sessions") {
+  // GET /api/config
+  if (pathname === "/api/config" && req.method === "GET") {
+    if (!projectRoot) {
+      sendJson(res, 500, { error: "project root not found" });
+      return true;
+    }
+    sendJson(res, 200, loadConfig(projectRoot));
+    return true;
+  }
+
+  // GET /api/sessions
+  if (pathname === "/api/sessions" && req.method === "GET") {
     sendJson(res, 200, { sessions: listSessions() });
     return true;
   }
 
-  const match = pathname.match(/^\/api\/sessions\/([^/]+)\/events$/);
-  if (match) {
-    const sessionId = decodeURIComponent(match[1]);
+  // POST /api/sessions
+  if (pathname === "/api/sessions" && req.method === "POST") {
+    if (!projectRoot) {
+      sendJson(res, 500, { error: "project root not found" });
+      return true;
+    }
+    const body = await readJsonBody(req);
+    const topic = String(body.topic || "").trim();
+    if (!topic) {
+      sendJson(res, 400, { error: "topic is required" });
+      return true;
+    }
+
+    const sessionStore = new SessionStore(realSessionRoot);
+    const session = sessionStore.createSession(topic);
+    const config = loadConfig(projectRoot);
+
+    const controller = {
+      sessionId: session.id,
+      sessionDir: session.dir,
+      sessionStore,
+      engine: null,
+      currentRun: null,
+    };
+
+    const engine = new CouncilEngine({
+      config,
+      sessionStore,
+      runAgent: makeRuntimeRunner(projectRoot, controller),
+      projectRoot,
+      prompts,
+      sessionDir: session.dir,
+      sessionId: session.id,
+    });
+    controller.engine = engine;
+
+    const jsonlSink = new JsonlSink({ sessionStore, sessionDir: session.dir });
+    const stateSink = new StateSnapshotSink({ sessionStore, sessionDir: session.dir });
+    engine.on("event", (e) => {
+      jsonlSink.consume(e);
+      stateSink.consume(e);
+    });
+
+    activeSessions.set(session.id, controller);
+
+    sendJson(res, 202, { session_id: session.id, status: "running" });
+
+    setImmediate(async () => {
+      try {
+        await engine.run(topic);
+      } catch (err) {
+        console.error(`[patchcouncil-ui] session ${session.id} error:`, err.message);
+      } finally {
+        activeSessions.delete(session.id);
+      }
+    });
+
+    return true;
+  }
+
+  // POST /api/sessions/:id/interjections
+  const interjectionMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/interjections$/);
+  if (interjectionMatch && req.method === "POST") {
+    const sessionId = decodeURIComponent(interjectionMatch[1]);
+    const controller = activeSessions.get(sessionId);
+    if (!controller) {
+      sendJson(res, 409, { error: "session is not running" });
+      return true;
+    }
+    const body = await readJsonBody(req);
+    const event = controller.engine.addInterjection(body.content);
+    if (!event) {
+      sendJson(res, 400, { error: "content is required" });
+      return true;
+    }
+    controller.sessionStore.deriveState(controller.sessionDir);
+    sendJson(res, 202, { event });
+    return true;
+  }
+
+  // POST /api/sessions/:id/cancel
+  const cancelMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/cancel$/);
+  if (cancelMatch && req.method === "POST") {
+    const sessionId = decodeURIComponent(cancelMatch[1]);
+    const controller = activeSessions.get(sessionId);
+    if (!controller) {
+      sendJson(res, 409, { error: "session is not running" });
+      return true;
+    }
+    const event = controller.engine.requestCancel("user");
+    if (controller.currentRun) {
+      controller.currentRun.cancel("cancelled by host");
+    }
+    controller.sessionStore.deriveState(controller.sessionDir);
+    sendJson(res, 202, { session_id: sessionId, status: "cancelling", event });
+    return true;
+  }
+
+  // GET /api/sessions/:id/events
+  const eventsMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/events$/);
+  if (eventsMatch && req.method === "GET") {
+    const sessionId = decodeURIComponent(eventsMatch[1]);
     const sinceSeq = query.since ? parseInt(query.since, 10) : -1;
     const events = readSessionEvents(sessionId, sinceSeq);
     if (!events) {
@@ -150,12 +313,12 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const parsed = url.parse(req.url || "/", true);
   const pathname = decodeURIComponent(parsed.pathname || "/");
 
   try {
-    if (handleApi(req, res, parsed)) {
+    if (await handleApi(req, res, parsed)) {
       return;
     }
     serveStatic(req, res, pathname);

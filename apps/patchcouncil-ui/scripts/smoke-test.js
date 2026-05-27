@@ -4,6 +4,7 @@ const port = 9876;
 const env = {
   ...process.env,
   PATCHCOUNCIL_UI_PORT: String(port),
+  PATCHCOUNCIL_FAKE_RUNTIME: "1",
 };
 
 function wait(ms) {
@@ -16,6 +17,24 @@ async function fetchText(path) {
     throw new Error(`${path} returned ${response.status}`);
   }
   return response.text();
+}
+
+async function fetchJson(path, options = {}) {
+  const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+    cache: "no-store",
+    ...options,
+    headers: {
+      "content-type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  const text = await response.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+  if (!response.ok) {
+    throw new Error(`${path} returned ${response.status}: ${text}`);
+  }
+  return data;
 }
 
 async function waitForServer() {
@@ -55,6 +74,49 @@ async function main() {
     if (!html.includes("PatchCouncil UI Spike")) {
       throw new Error("index html did not render expected title");
     }
+
+    // GET /api/config
+    const config = await fetchJson("/api/config");
+    if (!config.council || !config.agents) {
+      throw new Error("expected config response with council and agents");
+    }
+
+    // POST /api/sessions with FAKE_RUNTIME
+    const created = await fetchJson("/api/sessions", {
+      method: "POST",
+      body: JSON.stringify({ topic: "smoke workbench topic", mode: "council" }),
+    });
+    if (!created.session_id || created.status !== "running") {
+      throw new Error("expected running session from POST /api/sessions");
+    }
+
+    const sessionId = created.session_id;
+    const encoded = encodeURIComponent(sessionId);
+
+    // POST interjection
+    await fetchJson(`/api/sessions/${encoded}/interjections`, {
+      method: "POST",
+      body: JSON.stringify({ content: "host note from smoke" }),
+    });
+
+    // POST cancel
+    await fetchJson(`/api/sessions/${encoded}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+
+    // Wait briefly for async engine to process
+    await wait(500);
+
+    // Verify events contain interjection and cancel
+    const eventsResp = await fetchJson(`/api/sessions/${encoded}/events`);
+    if (!eventsResp.events || !eventsResp.events.some((e) => e.type === "user_interjection")) {
+      throw new Error("expected user_interjection event");
+    }
+    if (!eventsResp.events || !eventsResp.events.some((e) => e.type === "session_cancel_requested")) {
+      throw new Error("expected session_cancel_requested event");
+    }
+
     console.log("smoke ok");
   } finally {
     child.kill();
