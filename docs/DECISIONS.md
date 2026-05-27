@@ -2,6 +2,42 @@
 
 这个文件记录已经相对稳定的项目决策和背后的理由。
 
+## 2026-05-28：Workbench 成为主入口，Python 原型退场
+
+状态：已接受
+
+### 背景
+
+Node 全栈 council engine、session store、CLI 入口和 Web UI 实时轮询已经跑通。当前 UI 已不再只是 mock viewer，而具备从真实 `.project-ai/sessions` 读取 session、按事件流展示讨论过程的基础。
+
+继续把用户主入口放在 CLI 上，会让交互体验受限于命令行：用户只能启动和等待，很难在运行中插话、取消、查看结构化状态或继续历史 session。与此同时，Python `src/aictl` 已经主要作为历史原型存在，后续继续维护两套产品路径会增加认知和实现成本。
+
+### 决策
+
+将 PatchCouncil 的主体验升级为浏览器里的本地 Workbench：
+
+```text
+npm run start
+-> 打开 Web UI
+-> 创建 council session
+-> 实时观察讨论
+-> Host 追加指令
+-> 取消 running session
+-> Continue 已完成 session，创建 fork session
+```
+
+Node 全栈实现（`apps/patchcouncil-ui`）成为唯一活跃产品路径。Node CLI 可以保留为开发、调试和自动化入口，但不再作为用户发起 council 的主要界面。
+
+Python `src/aictl` 进入参考/退场状态：不再承接 Workbench v1 新能力，待 Node Workbench 稳定后再移除或归档。
+
+### 影响
+
+- Web UI 从历史事件查看器升级为交互式工作台。
+- server 需要提供创建 session、Host interjection、cancel、config 和 Continue/Fork 相关 API。
+- council event model 继续作为唯一事实来源，UI 从事件流投影出聊天式主线程和 raw events debug 视图。
+- `session_started` 需要保存启动时配置快照，后续 `/config` 修改只影响新 session。
+- Python 原型相关文档需要标注为参考实现，避免新功能继续落到 `src/aictl`。
+
 ## 2026-05-26：从固定工作流转向 Council 协调
 
 状态：已接受
