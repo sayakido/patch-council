@@ -12,6 +12,7 @@ const els = {
 
 let activeSessionId = "";
 let sessions = [];
+let pollInterval = null;
 
 async function fetchJson(path) {
   const response = await fetch(path, { cache: "no-store" });
@@ -53,6 +54,11 @@ function renderSessions() {
 }
 
 async function selectSession(sessionId) {
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+
   activeSessionId = sessionId;
   renderSessions();
   const session = sessions.find((item) => item.session_id === sessionId);
@@ -64,6 +70,45 @@ async function selectSession(sessionId) {
   renderHeader(session);
   renderStatus(session, events);
   renderTimeline(events);
+
+  // start polling if session is running
+  if (session.status === "running") {
+    let lastSeq = events.length > 0 ? events[events.length - 1].seq : -1;
+
+    pollInterval = setInterval(async () => {
+      try {
+        const pollData = await fetchJson(
+          `/api/sessions/${encodeURIComponent(sessionId)}/events?since=${lastSeq}`
+        );
+        const newEvents = Array.isArray(pollData.events) ? pollData.events : [];
+
+        if (newEvents.length > 0) {
+          for (const event of newEvents) {
+            els.timeline.append(renderEvent(event));
+            lastSeq = event.seq;
+          }
+          els.eventCount.textContent = `${lastSeq + 1} events`;
+        }
+
+        // re-fetch sessions to check for status change
+        const sessionsData = await fetchJson("/api/sessions");
+        sessions = Array.isArray(sessionsData.sessions) ? sessionsData.sessions : [];
+        const updated = sessions.find((s) => s.session_id === sessionId);
+        if (updated && updated.status !== "running") {
+          clearInterval(pollInterval);
+          pollInterval = null;
+          renderSessions();
+          renderHeader(updated);
+          // reload full events for final status panel update
+          const fullData = await fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}/events`);
+          const allEvents = Array.isArray(fullData.events) ? fullData.events : [];
+          renderStatus(updated, allEvents);
+        }
+      } catch {
+        // silently ignore polling errors
+      }
+    }, 3000);
+  }
 }
 
 function renderHeader(session) {

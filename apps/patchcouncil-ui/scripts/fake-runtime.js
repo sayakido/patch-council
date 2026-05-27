@@ -23,6 +23,36 @@ async function main() {
     return;
   }
 
+  if (scenario === "codex-jsonl") {
+    process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "fake-thread" }) + "\n");
+    process.stdout.write(JSON.stringify({ type: "turn.started" }) + "\n");
+    process.stdout.write(JSON.stringify({
+      type: "item.completed",
+      item: { id: "item_0", type: "agent_message", text: "Codex JSONL final text." },
+    }) + "\n");
+    process.stdout.write(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } }) + "\n");
+    return;
+  }
+
+  if (scenario === "claude-jsonl") {
+    process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "fake-session" }) + "\n");
+    process.stdout.write(JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Claude " } },
+    }) + "\n");
+    process.stdout.write(JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "JSONL partial." } },
+    }) + "\n");
+    process.stdout.write(JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result: "Claude JSONL final text.",
+    }) + "\n");
+    return;
+  }
+
   if (scenario === "stream") {
     await writeDelta("Hello ");
     await writeDelta("from ");

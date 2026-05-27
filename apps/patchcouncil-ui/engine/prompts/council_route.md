@@ -14,13 +14,11 @@
 当前 transcript：
 {{ transcript }}
 
-请返回 Markdown，并严格包含以下章节：
+请只返回一个 JSON 对象（不要 Markdown 代码块），格式如下：
 
-## Decision
-写出下一位 agent 的名字，只能是可选 agent 之一。
-
-## Role
-用一句话说明这位 agent 下一轮应该承担的角色。
-
-## Reason
-说明为什么现在应该让它发言。
+{
+  "decision": "continue",
+  "next_agent": "<可选 agent 之一>",
+  "role": "<该 agent 应承担的角色，一句话>",
+  "reason": "<选择该 agent 的理由>"
+}

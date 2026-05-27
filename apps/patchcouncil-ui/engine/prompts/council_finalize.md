@@ -11,9 +11,12 @@
 当前 transcript：
 {{ transcript }}
 
-请返回 Markdown，并包含以下章节：
+请只返回一个 JSON 对象（不要 Markdown 代码块），格式如下：
 
-## Consensus
-## Disagreements
-## Recommended next step
-## Needs confirmation
+{
+  "consensus": "<各方共识>",
+  "disagreements": "<存在的分歧，没有则填 'none'>",
+  "recommended_next_step": "<建议的下一步>",
+  "needs_confirmation": true,
+  "next_steps": ["具体步骤1", "具体步骤2"]
+}

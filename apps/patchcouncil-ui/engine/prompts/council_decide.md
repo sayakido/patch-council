@@ -20,16 +20,20 @@
 当前 transcript：
 {{ transcript }}
 
-请返回 Markdown，并严格包含以下章节：
+请只返回一个 JSON 对象（不要 Markdown 代码块），格式如下：
 
-## Decision
-只能写 `continue` 或 `finalize`。
+如果继续讨论：
+{
+  "decision": "continue",
+  "next_agent": "<可选 agent 之一>",
+  "role": "<该 agent 应承担的角色>",
+  "reason": "<为什么继续>"
+}
 
-## Next agent
-如果 Decision 是 `continue`，写下一位 agent 的名字，只能是可选 agent 之一。否则写 `none`。
-
-## Role
-如果 Decision 是 `continue`，用一句话说明下一位 agent 应承担的角色。否则写 `none`。
-
-## Reason
-说明为什么继续或收束。
+如果收束：
+{
+  "decision": "finalize",
+  "next_agent": null,
+  "role": null,
+  "reason": "<为什么收束>"
+}

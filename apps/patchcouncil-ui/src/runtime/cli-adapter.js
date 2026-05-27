@@ -93,7 +93,7 @@ function runCliRuntime(options) {
         }
         if (parsed?.type === "completed") {
           completedEventEmitted = true;
-          if (!replyText) replyText = parsed.text;
+          replyText = parsed.text || replyText;
           emit({
             type: "runtime.reply.completed",
             runtime,
@@ -102,6 +102,9 @@ function runCliRuntime(options) {
             item_id: parsed.itemId || `${turnId}-reply`,
             text: parsed.text || replyText,
           });
+          return;
+        }
+        if (parsed?.type === "ignored") {
           return;
         }
         replyText += line + "\n";
@@ -197,10 +200,37 @@ function parseRuntimeLine(line) {
     if (data.type === "completed") {
       return { type: "completed", text: String(data.text || ""), itemId: data.item_id };
     }
+    if (data.type === "item.completed" && data.item?.type === "agent_message") {
+      return { type: "completed", text: String(data.item.text || ""), itemId: data.item.id };
+    }
+    if (data.type === "result" && data.subtype === "success") {
+      return { type: "completed", text: String(data.result || "") };
+    }
+    if (data.type === "stream_event") {
+      const event = data.event || {};
+      const delta = event.delta || {};
+      if (event.type === "content_block_delta" && delta.type === "text_delta") {
+        return { type: "delta", text: String(delta.text || "") };
+      }
+      return { type: "ignored" };
+    }
+    if (isKnownRuntimeEnvelope(data.type)) {
+      return { type: "ignored" };
+    }
   } catch {
     return null;
   }
   return null;
+}
+
+function isKnownRuntimeEnvelope(type) {
+  return [
+    "thread.started",
+    "turn.started",
+    "turn.completed",
+    "system",
+    "assistant",
+  ].includes(type);
 }
 
 function turnFailed(runtime, threadId, turnId, message) {

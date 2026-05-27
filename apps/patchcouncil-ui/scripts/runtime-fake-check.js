@@ -67,6 +67,23 @@ async function testArgumentInput() {
   assert(events.some((event) => event.type === "runtime.turn.started" && event.args.includes("hello as argument")));
 }
 
+async function testCodexJsonlOutput() {
+  const { result, events } = await collectRun(["codex-jsonl"]);
+  assert.equal(result.ok, true);
+  assert.equal(result.text, "Codex JSONL final text.");
+  assert(events.some((event) => event.type === "runtime.reply.completed" && event.text === "Codex JSONL final text."));
+  assert(!result.text.includes("thread.started"));
+}
+
+async function testClaudeJsonlOutput() {
+  const { result, events } = await collectRun(["claude-jsonl"]);
+  assert.equal(result.ok, true);
+  assert.equal(result.text, "Claude JSONL final text.");
+  assert(events.some((event) => event.type === "runtime.reply.delta" && event.text === "Claude "));
+  assert(events.some((event) => event.type === "runtime.reply.completed" && event.text === "Claude JSONL final text."));
+  assert(!result.text.includes("system"));
+}
+
 async function main() {
   await testStream();
   await testCrash();
@@ -74,6 +91,8 @@ async function main() {
   await testPlainOutput();
   await testStdinInput();
   await testArgumentInput();
+  await testCodexJsonlOutput();
+  await testClaudeJsonlOutput();
   console.log("runtime fake ok");
 }
 
