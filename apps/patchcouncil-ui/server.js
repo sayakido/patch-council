@@ -215,10 +215,12 @@ async function handleApi(req, res, parsed) {
     let sourceMetadata = null;
     const sourceSessionId = String(body.source_session_id || "").trim();
     if (sourceSessionId) {
-      const sourceDir = path.join(realSessionRoot, sourceSessionId);
-      if (fs.existsSync(sourceDir)) {
-        sourceMetadata = new SessionStore(realSessionRoot).getSourceMetadata(sourceDir);
+      const sourceDir = safeJoin(realSessionRoot, sourceSessionId);
+      if (!sourceDir || !fs.existsSync(sourceDir)) {
+        sendJson(res, 404, { error: "source session not found" });
+        return true;
       }
+      sourceMetadata = new SessionStore(realSessionRoot).getSourceMetadata(sourceDir);
     }
 
     const sessionStore = new SessionStore(realSessionRoot);

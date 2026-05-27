@@ -248,8 +248,14 @@ class CouncilEngine extends EventEmitter {
       const routeResult = await this.routeCoordinator(topic, contextWithSource, agentProfiles, limits);
       decision = routeResult;
 
-      // --- agent turn loop ---
-      while (decision && decision.decision === "continue" && this.turnCount < maxTurns) {
+      // --- cancellation checkpoint after route ---
+      if (this.cancelRequested) {
+        // route returned but we were cancelled; skip all agent turns
+        // (fall through to the finalize block below)
+      } else {
+
+        // --- agent turn loop ---
+        while (decision && decision.decision === "continue" && this.turnCount < maxTurns) {
         const agentName = resolveAgentName(agents, decision.next_agent);
         if (!agentName) {
           this.emitEvent(events.EVENTS.COORDINATOR_ERROR, {
@@ -266,7 +272,7 @@ class CouncilEngine extends EventEmitter {
         const agentConfig = agents[agentName];
         const turnNum = this.turnCount + 1;
 
-        await this.runAgentTurn(turnNum, agentName, agentConfig, decision.role, topic, context, limits);
+        await this.runAgentTurn(turnNum, agentName, agentConfig, decision.role, topic, contextWithSource, limits);
         this.turnCount++;
         this.spokenAgents.add(agentName);
 
@@ -276,7 +282,7 @@ class CouncilEngine extends EventEmitter {
         if (this.cancelRequested) break;
 
         // --- decide ---
-        const decideResult = await this.decideCoordinator(topic, context, agentProfiles, limits, maxTurns);
+        const decideResult = await this.decideCoordinator(topic, contextWithSource, agentProfiles, limits, maxTurns);
         if (!decideResult) {
           // JSON parse failure, already emitted coordinator_error, break to finalize
           break;
@@ -299,6 +305,7 @@ class CouncilEngine extends EventEmitter {
           decision = enforced;
         }
       }
+      }
     } catch (err) {
       this.emitEvent(events.EVENTS.SESSION_ERROR, {
         message: err.message || String(err),
@@ -316,7 +323,7 @@ class CouncilEngine extends EventEmitter {
         next_steps: [],
       });
     } else {
-      await this.finalizeCouncil(topic, context, limits);
+      await this.finalizeCouncil(topic, contextWithSource, limits);
     }
 
     // --- session_finished ---

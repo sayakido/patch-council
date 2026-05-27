@@ -1,4 +1,7 @@
+const fs = require("node:fs");
+const path = require("node:path");
 const { spawn } = require("node:child_process");
+const { findProjectRoot } = require("../engine/config");
 
 const port = 9876;
 const env = {
@@ -94,6 +97,11 @@ async function main() {
     }
 
     // PUT /api/config
+    // Save raw config file to restore byte-for-byte after test
+    const projectRoot = findProjectRoot();
+    const configPath = path.join(projectRoot, ".project-ai", "config.yaml");
+    let originalConfigRaw = null;
+    try { originalConfigRaw = fs.readFileSync(configPath); } catch {}
     const originalConfig = JSON.parse(JSON.stringify(config));
     try {
       originalConfig.council.max_turns = 4;
@@ -105,11 +113,10 @@ async function main() {
         throw new Error("expected PUT /api/config to persist max_turns=4");
       }
     } finally {
-      // Restore original config
-      await fetchJson("/api/config", {
-        method: "PUT",
-        body: JSON.stringify(config),
-      });
+      // Restore original config byte-for-byte
+      if (originalConfigRaw !== null) {
+        fs.writeFileSync(configPath, originalConfigRaw);
+      }
     }
 
     // POST /api/sessions with FAKE_RUNTIME
