@@ -57,6 +57,10 @@ class CliRendererSink {
         return `[council] Final: ${(event.summary || "").slice(0, 120)}...`;
       case "session_finished":
         return `[council] Session done: ${event.outcome} (${event.turn_count} turns, ${event.distinct_agents?.join(", ")})`;
+      case "user_interjection":
+        return `[host] Interjection queued: ${(event.content || "").slice(0, 120)}`;
+      case "session_cancel_requested":
+        return `[council] Cancellation requested (${event.reason || "user"})`;
       case "agent_error":
       case "coordinator_error":
       case "session_error":

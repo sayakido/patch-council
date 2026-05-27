@@ -51,16 +51,24 @@ npm install
 
 ### 运行
 
+主入口是 Web UI——用户通过浏览器创建和控制 council 会话：
+
+```bash
+cd apps/patchcouncil-ui
+npm run start
+# → 打开 http://127.0.0.1:8765
+```
+
+Web UI 支持创建、观察、打断、取消和继续 council 会话。配置页面位于 `/config.html`。
+
+Node CLI 保留作为开发/调试入口，不在用户主路径上：
+
 ```bash
 # 语法检查
 npm run check
 
 # 集成测试（HTTP + 7 council engine 测试）
 npm run smoke
-
-# 启动 Web UI
-npm run start
-# → http://127.0.0.1:8765
 
 # 运行 council 讨论（需要 Codex + Claude CLI 已安装和登录）
 node cli/cli.js council "你的话题"

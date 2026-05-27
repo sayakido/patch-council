@@ -102,6 +102,15 @@ function loadConfig(projectRoot = null) {
   return deepMerge(DEFAULT_CONFIG, fileConfig);
 }
 
+function saveConfig(config, projectRoot = null) {
+  const root = projectRoot || findProjectRoot();
+  const aiDir = path.join(root, PROJECT_DIR);
+  fs.mkdirSync(aiDir, { recursive: true });
+  const configFile = path.join(aiDir, CONFIG_FILE);
+  fs.writeFileSync(configFile, yaml.dump(config, { sortKeys: false }), "utf8");
+  return loadConfig(root);
+}
+
 function ensureProject(root) {
   const aiDir = path.join(root, PROJECT_DIR);
   fs.mkdirSync(aiDir, { recursive: true });
@@ -126,6 +135,7 @@ function ensureProject(root) {
 
 module.exports = {
   loadConfig,
+  saveConfig,
   findProjectRoot,
   deepMerge,
   DEFAULT_CONFIG,

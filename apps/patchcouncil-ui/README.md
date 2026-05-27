@@ -1,22 +1,20 @@
-# PatchCouncil UI Spike
+# PatchCouncil Workbench v1
 
-这是 PatchCouncil 的本地可视化 UI spike。
+PatchCouncil 的本地 council 工作台——一个基于 Web 的 chat 工作台，用于创建和控制多 AI council 会话。
 
-当前目标：
+用户能力：
 
-- 用 mock council events 验证可视化方向；
-- 展示 session list；
-- 展示 discussion timeline；
-- 展示 work/status panel；
-- 验证 runtime events / council events 双层模型在 UI 侧是否顺手。
+- 创建新 council 会话并设定讨论主题
+- 实时观察 coordinator 决策和 agent 发言
+- 打断运行中的讨论
+- 取消会话
+- 继续已暂停的会话
+- 通过 `/config.html` 配置 agent 和 council 参数
 
 当前不做：
 
-- 不接真实 council loop；
-- 不做 WebSocket；
-- 不做复杂持久化；
-- 不重写现有 Python council loop。
-- 不默认调用真实 Codex/Claude。
+- 不默认调用真实 Codex/Claude（需手动配置 agent）
+- 不做 WebSocket（当前使用增量轮询）
 
 ## 运行
 
