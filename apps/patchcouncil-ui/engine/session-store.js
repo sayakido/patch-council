@@ -91,6 +91,8 @@ class SessionStore {
       status = outcome === "error" || outcome === "cancelled" ? outcome : "done";
     } else if (allEvents.some((e) => e.type === "session_error")) {
       status = "error";
+    } else if (allEvents.some((e) => e.type === "session_cancel_requested")) {
+      status = "cancelling";
     }
 
     const agentTurnCompletedEvents = allEvents.filter((e) => e.type === "agent_turn_completed");
@@ -124,6 +126,32 @@ class SessionStore {
     return state;
   }
 
+  getSourceMetadata(sessionDir) {
+    const allEvents = this.readEvents(sessionDir);
+    const started = allEvents.find((e) => e.type === "session_started");
+    const finalizedEvents = allEvents.filter((e) => e.type === "finalized");
+    const finalized = finalizedEvents.length > 0 ? finalizedEvents[finalizedEvents.length - 1] : null;
+    const agentTurns = allEvents.filter((e) => e.type === "agent_turn_completed");
+
+    let summary;
+    if (finalized && finalized.summary) {
+      summary = finalized.summary;
+    } else {
+      const parts = ["Source topic: " + (started ? started.topic : path.basename(sessionDir))];
+      for (let i = 0; i < agentTurns.length && i < 2; i++) {
+        const turnEvent = agentTurns[i];
+        parts.push(turnEvent.agent + ": " + String(turnEvent.content || "").slice(0, 500));
+      }
+      summary = parts.join("\n\n");
+    }
+
+    return {
+      source_session_id: started ? started.session_id : path.basename(sessionDir),
+      source_summary: summary,
+      source_transcript_path: path.join(sessionDir, "transcript.jsonl"),
+    };
+  }
+
   generateTranscript(sessionDir) {
     const allEvents = this.readEvents(sessionDir);
     const lines = [];
@@ -149,6 +177,21 @@ class SessionStore {
             lines.push(`**Role:** ${event.role}`);
           }
           lines.push(`**Reason:** ${event.reason}`);
+          lines.push("");
+          break;
+
+        case "user_interjection":
+          lines.push(`## Host Interjection (turn ${event.turn})`);
+          lines.push("");
+          lines.push(event.content);
+          lines.push("");
+          break;
+
+        case "session_cancel_requested":
+          lines.push("## Cancellation requested");
+          lines.push("");
+          lines.push(`**Reason:** ${event.reason || "user"}`);
+          lines.push(`**Requested:** ${event.requested_at}`);
           lines.push("");
           break;
 

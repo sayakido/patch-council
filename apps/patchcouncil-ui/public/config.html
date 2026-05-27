@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PatchCouncil Config</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="config-page">
+      <header class="config-header">
+        <div>
+          <p class="eyebrow">Global Defaults</p>
+          <h1>PatchCouncil Config</h1>
+        </div>
+        <a class="button-link" href="/">Back to Workbench</a>
+      </header>
+
+      <form id="configForm" class="config-form">
+        <section class="config-section">
+          <h2>Council</h2>
+          <label>Max turns <input id="maxTurnsInput" type="number" min="1" max="20"></label>
+          <label>Min distinct agents <input id="minDistinctAgentsInput" type="number" min="1" max="10"></label>
+        </section>
+
+        <section class="config-section">
+          <h2>Agents</h2>
+          <label><input id="codexEnabledInput" type="checkbox"> codex enabled</label>
+          <label><input id="claudeEnabledInput" type="checkbox"> claude enabled</label>
+        </section>
+
+        <button class="primary" type="submit">Save</button>
+        <p id="configStatus" class="latest-signal"></p>
+      </form>
+    </main>
+    <script src="/config.js"></script>
+  </body>
+</html>

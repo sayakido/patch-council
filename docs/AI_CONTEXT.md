@@ -7,6 +7,8 @@
 - 代码里的项目名目前是 `aictl`，工作区名是 `PatchCouncil`。
 - 项目目标：编排多个本地 AI 命令行工具，探索轻量级多 AI 协作。
 - 当前方向：从固定任务流水线，转向动态的 `council` 协调模型。
+- **活跃实现**：Node Workbench（`apps/patchcouncil-ui`）是当前的主力产品路径。
+- **参考实现**：`src/aictl/` 是历史 Python 原型/参考，不再添加新功能。Python 路径仅保留用于概念参考。
 
 ## 当前产品方向
 

@@ -15,6 +15,8 @@ const EVENTS = {
   AGENT_ERROR: "agent_error",
   COORDINATOR_ERROR: "coordinator_error",
   SESSION_ERROR: "session_error",
+  USER_INTERJECTION: "user_interjection",
+  SESSION_CANCEL_REQUESTED: "session_cancel_requested",
 };
 
 function baseEvent(sessionId, seq, type, phase) {
@@ -124,6 +126,21 @@ function sessionError(sessionId, seq, phase, message, recoverable, action, detai
   });
 }
 
+function userInterjection(sessionId, seq, phase, turn, content, createdAt) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.USER_INTERJECTION, phase), {
+    turn,
+    content,
+    created_at: createdAt,
+  });
+}
+
+function sessionCancelRequested(sessionId, seq, phase, requestedAt, reason) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.SESSION_CANCEL_REQUESTED, phase), {
+    requested_at: requestedAt,
+    reason: reason || "user",
+  });
+}
+
 module.exports = {
   EVENTS,
   baseEvent,
@@ -141,4 +158,6 @@ module.exports = {
   agentError,
   coordinatorError,
   sessionError,
+  userInterjection,
+  sessionCancelRequested,
 };

@@ -138,6 +138,7 @@ class CouncilEngine extends EventEmitter {
     this.prompts = options.prompts;
     this.sessionDir = options.sessionDir;
     this.sessionId = options.sessionId;
+    this.sourceMetadata = options.sourceMetadata || null;
 
     // per-run state
     this.seq = -1;
@@ -147,6 +148,11 @@ class CouncilEngine extends EventEmitter {
     this.phase = "discussion";
     this.errorCount = 0;
     this.startedAt = null;
+
+    // host controls
+    this.cancelRequested = false;
+    this.cancelReason = null;
+    this.interjections = [];
   }
 
   emitEvent(type, fields) {
@@ -158,6 +164,28 @@ class CouncilEngine extends EventEmitter {
     this.eventLog.push(e);
     this.emit("event", e);
     return e;
+  }
+
+  addInterjection(content) {
+    const text = String(content || "").trim();
+    if (!text) return null;
+    const event = this.emitEvent(events.EVENTS.USER_INTERJECTION, {
+      turn: this.turnCount,
+      content: text,
+      created_at: new Date().toISOString(),
+    });
+    this.interjections.push(event);
+    return event;
+  }
+
+  requestCancel(reason = "user") {
+    if (this.cancelRequested) return null;
+    this.cancelRequested = true;
+    this.cancelReason = reason;
+    return this.emitEvent(events.EVENTS.SESSION_CANCEL_REQUESTED, {
+      requested_at: new Date().toISOString(),
+      reason,
+    });
   }
 
   async run(topic) {
@@ -173,12 +201,41 @@ class CouncilEngine extends EventEmitter {
     const context = collectContext(this.projectRoot, this.config);
     const agentProfiles = formatAgentProfiles(this.config);
 
+    const sourceContext = this.sourceMetadata
+      ? "### Source session\n\n" + this.sourceMetadata.source_summary + "\n\nTranscript: " + this.sourceMetadata.source_transcript_path
+      : "";
+    const contextWithSource = [sourceContext, context].filter(Boolean).join("\n\n");
+
     // emit session_started
+    const sessionConfigSnapshot = {
+      council: councilCfg,
+      agents: Object.fromEntries(
+        Object.entries(agents).map(([id, cfg]) => [
+          id,
+          {
+            command: cfg.command,
+            args: cfg.args || [],
+            input_mode: cfg.input_mode,
+            capabilities: cfg.capabilities || [],
+            write_access: Boolean(cfg.write_access),
+            timeout_sec: cfg.timeout_sec,
+            enabled: cfg.enabled !== false,
+            roles: id === selectCoordinator(this.config)?.name ? ["coordinator", "agent"] : ["agent"],
+          },
+        ])
+      ),
+    };
+
     this.emitEvent(events.EVENTS.SESSION_STARTED, {
       started_at: this.startedAt,
       topic,
       mode: "council",
-      config: councilCfg,
+      ...(this.sourceMetadata ? {
+        source_session_id: this.sourceMetadata.source_session_id,
+        source_summary: this.sourceMetadata.source_summary,
+        source_transcript_path: this.sourceMetadata.source_transcript_path,
+      } : {}),
+      config: sessionConfigSnapshot,
       capabilities: { can_execute: false, requires_user_confirmation_before_write: true },
       agents: Object.entries(agents).map(([id, cfg]) => ({ id, command: cfg.command, roles: id === selectCoordinator(this.config)?.name ? ["coordinator", "agent"] : ["agent"] })),
     });
@@ -188,11 +245,17 @@ class CouncilEngine extends EventEmitter {
 
     try {
       // --- route ---
-      const routeResult = await this.routeCoordinator(topic, context, agentProfiles, limits);
+      const routeResult = await this.routeCoordinator(topic, contextWithSource, agentProfiles, limits);
       decision = routeResult;
 
-      // --- agent turn loop ---
-      while (decision && decision.decision === "continue" && this.turnCount < maxTurns) {
+      // --- cancellation checkpoint after route ---
+      if (this.cancelRequested) {
+        // route returned but we were cancelled; skip all agent turns
+        // (fall through to the finalize block below)
+      } else {
+
+        // --- agent turn loop ---
+        while (decision && decision.decision === "continue" && this.turnCount < maxTurns) {
         const agentName = resolveAgentName(agents, decision.next_agent);
         if (!agentName) {
           this.emitEvent(events.EVENTS.COORDINATOR_ERROR, {
@@ -209,14 +272,17 @@ class CouncilEngine extends EventEmitter {
         const agentConfig = agents[agentName];
         const turnNum = this.turnCount + 1;
 
-        await this.runAgentTurn(turnNum, agentName, agentConfig, decision.role, topic, context, limits);
+        await this.runAgentTurn(turnNum, agentName, agentConfig, decision.role, topic, contextWithSource, limits);
         this.turnCount++;
         this.spokenAgents.add(agentName);
 
         if (this.turnCount >= maxTurns) break;
 
+        // --- cancellation checkpoint ---
+        if (this.cancelRequested) break;
+
         // --- decide ---
-        const decideResult = await this.decideCoordinator(topic, context, agentProfiles, limits, maxTurns);
+        const decideResult = await this.decideCoordinator(topic, contextWithSource, agentProfiles, limits, maxTurns);
         if (!decideResult) {
           // JSON parse failure, already emitted coordinator_error, break to finalize
           break;
@@ -239,6 +305,7 @@ class CouncilEngine extends EventEmitter {
           decision = enforced;
         }
       }
+      }
     } catch (err) {
       this.emitEvent(events.EVENTS.SESSION_ERROR, {
         message: err.message || String(err),
@@ -250,7 +317,14 @@ class CouncilEngine extends EventEmitter {
     }
 
     // --- finalize ---
-    await this.finalizeCouncil(topic, context, limits);
+    if (this.cancelRequested) {
+      this.emitEvent(events.EVENTS.FINALIZED, {
+        summary: "Session cancelled by host.",
+        next_steps: [],
+      });
+    } else {
+      await this.finalizeCouncil(topic, contextWithSource, limits);
+    }
 
     // --- session_finished ---
     const finishedAt = new Date().toISOString();
@@ -258,7 +332,7 @@ class CouncilEngine extends EventEmitter {
     this.phase = "finalized";
 
     const distinctAgents = [...this.spokenAgents];
-    const outcome = this.errorCount > 0 ? "error" : "discussion_only";
+    const outcome = this.cancelRequested ? "cancelled" : (this.errorCount > 0 ? "error" : "discussion_only");
 
     this.emitEvent(events.EVENTS.SESSION_FINISHED, {
       finished_at: finishedAt,
@@ -529,6 +603,8 @@ class CouncilEngine extends EventEmitter {
         messages.push(`### Coordinator decided: ${event.decision}\nNext: ${event.next_agent || "none"}\nRole: ${event.role || "none"}\nReason: ${event.reason || ""}`);
       } else if (event.type === "policy_override") {
         messages.push(`### Policy override: ${event.policy}\n${event.original_decision} → ${event.new_decision}\nReason: ${event.reason}`);
+      } else if (event.type === "user_interjection") {
+        messages.push(`### Host interjection (turn ${event.turn})\n\n${clipText(event.content, limits.maxMessageChars)}`);
       }
     }
 
