@@ -163,6 +163,29 @@ async function main() {
       throw new Error("expected session_cancel_requested event");
     }
 
+    // Wait for the first session to finish (it gets cancelled so it should finish fast)
+    await wait(2000);
+
+    // Create a fork session
+    const continued = await fetchJson("/api/sessions", {
+      method: "POST",
+      body: JSON.stringify({ topic: "continued discussion", mode: "council", source_session_id: sessionId }),
+    });
+    if (!continued.session_id || continued.status !== "running") {
+      throw new Error("expected running session from continued POST /api/sessions");
+    }
+
+    // Verify source metadata in session_started event
+    const continuedEvents = await fetchJson(`/api/sessions/${encodeURIComponent(continued.session_id)}/events`);
+    const startedEvent = (continuedEvents.events || []).find((e) => e.type === "session_started");
+    if (!startedEvent) {
+      throw new Error("continued session missing session_started event");
+    }
+    // The source_session_id and source_summary should be present
+    if (!startedEvent.source_session_id) {
+      throw new Error("continued session_started missing source_session_id");
+    }
+
     console.log("smoke ok");
   } finally {
     child.kill();

@@ -542,6 +542,59 @@ async function testWorkbenchStateAndTranscriptEvents() {
   pass();
 }
 
+async function testSourceMetadataFromFinalizedSession() {
+  setupTest("source metadata from finalized session");
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("original topic");
+
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 0, type: EVENTS.SESSION_STARTED, phase: "discussion",
+    session_id: session.id, started_at: "2026-05-28T10:00:00+08:00",
+    topic: "original topic", mode: "council", config: {}, capabilities: {}, agents: [],
+  });
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 1, type: EVENTS.AGENT_TURN_COMPLETED, phase: "discussion",
+    session_id: session.id, turn: 1, agent: "codex", content: "Agent answer here",
+  });
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 2, type: EVENTS.FINALIZED, phase: "finalized",
+    session_id: session.id, summary: "Final summary text", next_steps: [],
+  });
+
+  const meta = store.getSourceMetadata(session.dir);
+  assert.equal(meta.source_session_id, session.id);
+  assert.equal(meta.source_summary, "Final summary text");
+  assert.ok(meta.source_transcript_path.includes("transcript.jsonl"));
+
+  teardownTest();
+  pass();
+}
+
+async function testSourceMetadataFromCancelledSession() {
+  setupTest("source metadata from cancelled session (no finalized)");
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("cancelled topic");
+
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 0, type: EVENTS.SESSION_STARTED, phase: "discussion",
+    session_id: session.id, started_at: "2026-05-28T10:00:00+08:00",
+    topic: "cancelled topic", mode: "council", config: {}, capabilities: {}, agents: [],
+  });
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 1, type: EVENTS.AGENT_TURN_COMPLETED, phase: "discussion",
+    session_id: session.id, turn: 1, agent: "codex", content: "Partial answer",
+  });
+
+  const meta = store.getSourceMetadata(session.dir);
+  assert.match(meta.source_summary, /cancelled topic/);
+  assert.match(meta.source_summary, /Partial answer/);
+
+  teardownTest();
+  pass();
+}
+
 // --- Main ---
 
 async function main() {
@@ -558,6 +611,8 @@ async function main() {
   await testMaxTurnsEnforced();
   await testInterjectionIncludedInNextCoordinatorBrief();
   await testCancellationStopsAfterCurrentTurn();
+  await testSourceMetadataFromFinalizedSession();
+  await testSourceMetadataFromCancelledSession();
 
   process.stderr.write(`\n${passCount}/${testCount} passed\n`);
   if (passCount < testCount) process.exit(1);

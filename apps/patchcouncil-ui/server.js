@@ -211,6 +211,16 @@ async function handleApi(req, res, parsed) {
       return true;
     }
 
+    // Resolve source metadata for session fork/continue
+    let sourceMetadata = null;
+    const sourceSessionId = String(body.source_session_id || "").trim();
+    if (sourceSessionId) {
+      const sourceDir = path.join(realSessionRoot, sourceSessionId);
+      if (fs.existsSync(sourceDir)) {
+        sourceMetadata = new SessionStore(realSessionRoot).getSourceMetadata(sourceDir);
+      }
+    }
+
     const sessionStore = new SessionStore(realSessionRoot);
     const session = sessionStore.createSession(topic);
     const config = loadConfig(projectRoot);
@@ -231,6 +241,7 @@ async function handleApi(req, res, parsed) {
       prompts,
       sessionDir: session.dir,
       sessionId: session.id,
+      sourceMetadata,
     });
     controller.engine = engine;
 

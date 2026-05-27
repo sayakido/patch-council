@@ -138,6 +138,7 @@ class CouncilEngine extends EventEmitter {
     this.prompts = options.prompts;
     this.sessionDir = options.sessionDir;
     this.sessionId = options.sessionId;
+    this.sourceMetadata = options.sourceMetadata || null;
 
     // per-run state
     this.seq = -1;
@@ -200,6 +201,11 @@ class CouncilEngine extends EventEmitter {
     const context = collectContext(this.projectRoot, this.config);
     const agentProfiles = formatAgentProfiles(this.config);
 
+    const sourceContext = this.sourceMetadata
+      ? "### Source session\n\n" + this.sourceMetadata.source_summary + "\n\nTranscript: " + this.sourceMetadata.source_transcript_path
+      : "";
+    const contextWithSource = [sourceContext, context].filter(Boolean).join("\n\n");
+
     // emit session_started
     const sessionConfigSnapshot = {
       council: councilCfg,
@@ -224,6 +230,11 @@ class CouncilEngine extends EventEmitter {
       started_at: this.startedAt,
       topic,
       mode: "council",
+      ...(this.sourceMetadata ? {
+        source_session_id: this.sourceMetadata.source_session_id,
+        source_summary: this.sourceMetadata.source_summary,
+        source_transcript_path: this.sourceMetadata.source_transcript_path,
+      } : {}),
       config: sessionConfigSnapshot,
       capabilities: { can_execute: false, requires_user_confirmation_before_write: true },
       agents: Object.entries(agents).map(([id, cfg]) => ({ id, command: cfg.command, roles: id === selectCoordinator(this.config)?.name ? ["coordinator", "agent"] : ["agent"] })),
@@ -234,7 +245,7 @@ class CouncilEngine extends EventEmitter {
 
     try {
       // --- route ---
-      const routeResult = await this.routeCoordinator(topic, context, agentProfiles, limits);
+      const routeResult = await this.routeCoordinator(topic, contextWithSource, agentProfiles, limits);
       decision = routeResult;
 
       // --- agent turn loop ---
