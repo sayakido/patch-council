@@ -58,7 +58,7 @@ function makeFakeRuntime(scenarios) {
   return async (_agentName, _agentConfig, prompt) => {
     for (const s of scenarios) {
       if (s.match(prompt)) {
-        return typeof s.response === "function" ? s.response() : s.response;
+        return typeof s.response === "function" ? s.response(prompt) : s.response;
       }
     }
     return { ok: false, text: "", error: "no matching scenario for prompt: " + prompt.slice(0, 100) };
@@ -143,6 +143,10 @@ async function testHappyPathSingleAgent() {
   assert.equal(result.errorCount, 0);
   assert.equal(result.outcome, "discussion_only");
   assert.ok(!events.some((e) => e.type === EVENTS.POLICY_OVERRIDE), "unexpected policy_override");
+
+  const started = events.find((e) => e.type === EVENTS.SESSION_STARTED);
+  assert.equal(started.config.council.max_turns, 1);
+  assert.deepStrictEqual(started.config.agents.codex.capabilities, ["plan", "synthesize", "review", "judge"]);
 
   teardownTest();
   pass();
@@ -361,6 +365,123 @@ async function testMaxTurnsEnforced() {
   pass();
 }
 
+async function testInterjectionIncludedInNextCoordinatorBrief() {
+  setupTest("interjection included in next coordinator brief");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.council.min_distinct_agents = 1;
+  config.council.max_turns = 2;
+
+  let capturedDecidePrompt = "";
+  let engineRef = null;
+
+  const scenarios = [
+    {
+      match: isRoutePrompt,
+      response: { ok: true, text: JSON.stringify({ decision: "continue", next_agent: "codex", role: "analyze", reason: "first" }) },
+    },
+    {
+      match: isAgentTurnPrompt,
+      response: async () => {
+        engineRef.addInterjection("please include security");
+        return { ok: true, text: "Codex analysis." };
+      },
+    },
+    {
+      match: isDecidePrompt,
+      response: (prompt) => {
+        capturedDecidePrompt = prompt;
+        return { ok: true, text: JSON.stringify({ decision: "finalize", next_agent: null, role: null, reason: "done" }) };
+      },
+    },
+    {
+      match: isFinalizePrompt,
+      response: { ok: true, text: JSON.stringify({ consensus: "ok", next_steps: [] }) },
+    },
+  ];
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("test topic");
+  const engine = new CouncilEngine({
+    config,
+    sessionStore: store,
+    runAgent: makeFakeRuntime(scenarios),
+    projectRoot: testDir,
+    prompts,
+    sessionDir: session.dir,
+    sessionId: session.id,
+  });
+  engineRef = engine;
+  engine.on("event", (e) => store.appendEvent(session.dir, e));
+
+  await engine.run("test topic");
+
+  assert.match(capturedDecidePrompt, /please include security/);
+  assert.ok(store.readEvents(session.dir).some((e) => e.type === EVENTS.USER_INTERJECTION));
+
+  teardownTest();
+  pass();
+}
+
+async function testCancellationStopsAfterCurrentTurn() {
+  setupTest("cancellation stops after current turn");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.council.min_distinct_agents = 1;
+  config.council.max_turns = 3;
+
+  let engineRef = null;
+  let decideCalled = false;
+  const scenarios = [
+    {
+      match: isRoutePrompt,
+      response: { ok: true, text: JSON.stringify({ decision: "continue", next_agent: "codex", role: "analyze", reason: "first" }) },
+    },
+    {
+      match: isAgentTurnPrompt,
+      response: async () => {
+        engineRef.requestCancel("user");
+        return { ok: true, text: "Codex analysis after cancel." };
+      },
+    },
+    {
+      match: isDecidePrompt,
+      response: () => {
+        decideCalled = true;
+        return { ok: true, text: JSON.stringify({ decision: "continue", next_agent: "claude", role: "challenge", reason: "continue" }) };
+      },
+    },
+    {
+      match: isFinalizePrompt,
+      response: { ok: true, text: JSON.stringify({ consensus: "cancelled", next_steps: [] }) },
+    },
+  ];
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("test topic");
+  const engine = new CouncilEngine({
+    config,
+    sessionStore: store,
+    runAgent: makeFakeRuntime(scenarios),
+    projectRoot: testDir,
+    prompts,
+    sessionDir: session.dir,
+    sessionId: session.id,
+  });
+  engineRef = engine;
+  engine.on("event", (e) => store.appendEvent(session.dir, e));
+
+  const result = await engine.run("test topic");
+  const stored = store.readEvents(session.dir);
+
+  assert.equal(decideCalled, false);
+  assert.equal(result.outcome, "cancelled");
+  assert.ok(stored.some((e) => e.type === EVENTS.SESSION_CANCEL_REQUESTED));
+
+  teardownTest();
+  pass();
+}
+
 async function testWorkbenchEventConstants() {
   setupTest("workbench event constants");
 
@@ -435,6 +556,8 @@ async function main() {
   await testMinDistinctAgentsPolicy();
   await testAgentCrashRecovery();
   await testMaxTurnsEnforced();
+  await testInterjectionIncludedInNextCoordinatorBrief();
+  await testCancellationStopsAfterCurrentTurn();
 
   process.stderr.write(`\n${passCount}/${testCount} passed\n`);
   if (passCount < testCount) process.exit(1);
