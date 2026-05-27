@@ -91,6 +91,8 @@ class SessionStore {
       status = outcome === "error" || outcome === "cancelled" ? outcome : "done";
     } else if (allEvents.some((e) => e.type === "session_error")) {
       status = "error";
+    } else if (allEvents.some((e) => e.type === "session_cancel_requested")) {
+      status = "cancelling";
     }
 
     const agentTurnCompletedEvents = allEvents.filter((e) => e.type === "agent_turn_completed");
@@ -149,6 +151,21 @@ class SessionStore {
             lines.push(`**Role:** ${event.role}`);
           }
           lines.push(`**Reason:** ${event.reason}`);
+          lines.push("");
+          break;
+
+        case "user_interjection":
+          lines.push(`## Host Interjection (turn ${event.turn})`);
+          lines.push("");
+          lines.push(event.content);
+          lines.push("");
+          break;
+
+        case "session_cancel_requested":
+          lines.push("## Cancellation requested");
+          lines.push("");
+          lines.push(`**Reason:** ${event.reason || "user"}`);
+          lines.push(`**Requested:** ${event.requested_at}`);
           lines.push("");
           break;
 

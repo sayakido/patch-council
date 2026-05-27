@@ -361,11 +361,73 @@ async function testMaxTurnsEnforced() {
   pass();
 }
 
+async function testWorkbenchEventConstants() {
+  setupTest("workbench event constants");
+
+  assert.equal(EVENTS.USER_INTERJECTION, "user_interjection");
+  assert.equal(EVENTS.SESSION_CANCEL_REQUESTED, "session_cancel_requested");
+
+  teardownTest();
+  pass();
+}
+
+async function testWorkbenchStateAndTranscriptEvents() {
+  setupTest("workbench events derive state and transcript");
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("cancel me");
+  store.appendEvent(session.dir, {
+    schema_version: 1,
+    seq: 0,
+    type: EVENTS.SESSION_STARTED,
+    phase: "discussion",
+    session_id: session.id,
+    started_at: "2026-05-28T10:00:00+08:00",
+    topic: "cancel me",
+    mode: "council",
+    config: {},
+    capabilities: {},
+    agents: [],
+  });
+  store.appendEvent(session.dir, {
+    schema_version: 1,
+    seq: 1,
+    type: EVENTS.USER_INTERJECTION,
+    phase: "discussion",
+    session_id: session.id,
+    turn: 0,
+    content: "please focus",
+    created_at: "2026-05-28T10:00:10+08:00",
+  });
+  store.appendEvent(session.dir, {
+    schema_version: 1,
+    seq: 2,
+    type: EVENTS.SESSION_CANCEL_REQUESTED,
+    phase: "discussion",
+    session_id: session.id,
+    requested_at: "2026-05-28T10:00:20+08:00",
+    reason: "user",
+  });
+
+  const state = store.deriveState(session.dir);
+  const transcript = store.generateTranscript(session.dir);
+
+  assert.equal(state.status, "cancelling");
+  assert.match(transcript, /Host/);
+  assert.match(transcript, /please focus/);
+  assert.match(transcript, /Cancellation requested/);
+
+  teardownTest();
+  pass();
+}
+
 // --- Main ---
 
 async function main() {
   process.stderr.write("\nCouncil Smoke Tests\n\n");
 
+  await testWorkbenchEventConstants();
+  await testWorkbenchStateAndTranscriptEvents();
   await testHappyPathSingleAgent();
   await testHappyPathTwoAgents();
   await testJsonParseFailure();
