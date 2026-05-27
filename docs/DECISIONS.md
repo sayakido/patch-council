@@ -279,9 +279,45 @@ Node runtime adapter spike 已通过 fake 矩阵 + 真实 codex 验证。全栈 
 - 事件类型定义（`events.ts`）成为 engine 和 UI 的共享单源真相
 - `transcript.jsonl` 作为唯一权威日志的设计保持不变
 
-## 2026-05-26：Coordinator 决策暂时使用 Markdown
+## 2026-05-27：Coordinator 决策直接使用 JSON
 
 状态：已接受
+
+### 背景
+
+Python 原型阶段，为了快速验证 council loop，coordinator 使用 Markdown 章节输出决策（`## Decision`、`## Next agent`、`## Role`、`## Reason`）。这避免了早期引入 JSON 格式约束，但 Markdown 解析天生不稳定——模型可能多输出空行、换措辞、少写章节。
+
+Node 全栈实现 council engine 时，如果先实现 Markdown 解析再切换到 JSON，会有一次多余的返工。
+
+### 决策
+
+在 Step 3 Council Engine 中，coordinator 决策直接使用 JSON 格式：
+
+```json
+{
+  "decision": "continue",
+  "next_agent": "claude",
+  "role": "从实现可行性角度挑战方案",
+  "reason": "Codex 给出了设计方向，但没有评估实现成本"
+}
+```
+
+同时设计兜底策略：
+- JSON 解析失败 → 默认收束（`fallback_finalize`）
+- agent 不存在 → 回退到可用 agent 列表中的第一个
+- 超过最大轮数 → 强制收束
+- 解析失败应记录 `coordinator_error` 事件
+
+### 影响
+
+- council_route.md、council_decide.md、council_finalize.md 的 prompt 模板需输出 JSON
+- engine 使用 `JSON.parse` 解析，比 Markdown 正则稳定
+- 错误处理路径在首次实现时就包含，不需要后续补丁
+- 不再需要在"以后"做 Markdown → JSON 迁移
+
+## 2026-05-26：Coordinator 决策暂时使用 Markdown
+
+状态：已废弃（被 2026-05-27 JSON 决策取代）
 
 ### 背景
 
@@ -298,11 +334,9 @@ Node runtime adapter spike 已通过 fake 矩阵 + 真实 codex 验证。全栈 
 ## Reason
 ```
 
-### 影响
+### 废弃原因
 
-- 实现更轻，内容也更容易人工检查。
-- 解析稳定性不如严格 JSON。
-- 后续迁移到 JSON 时，需要补齐兜底策略。
+在 Node 全栈实现 council engine 时，与其先实现 Markdown 解析再迁移，不如从零就用 JSON。prompt 模板改 JSON 格式成本很低，`JSON.parse` 也比 Markdown 正则解析稳定。迁移时机已到。
 
 ## 2026-05-26：增加最少不同 Agent 参与策略
 

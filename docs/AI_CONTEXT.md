@@ -24,7 +24,7 @@ aictl "自然语言请求"
 - `opencode` 已卸载，决定替换为 `claude`（Claude Code CLI）。Claude Code CLI 原生支持 `--output-format stream-json`，与 Codex 的 `--json` 一样可直接对接 adapter 的 JSONL 解析。
 - Step 0 完成：`npm run runtime:claude` 验证通过（需 `--verbose` 配合 `--output-format stream-json`）。三个 runtime check 全部通过。
 - Step 1 完成：engine/config.js（YAML 配置加载 + 默认值合并）、engine/prompts.js（`{{ variable }}` 模板替换）、4 个 council prompt 模板已从 Python 复制到 engine/prompts/。
-- 当前：Step 1.5 Adapter Input + Config Alignment。先补 `runCliRuntime` 的 `input` / `input_mode`，验证 `codex exec --json ... stdin`，并把 Claude 默认 args 和 README 对齐，再进入 Session Store。
+- 当前：Step 1.5 Adapter Input + Config Alignment。先补 `runCliRuntime` 的 `input` / `input_mode`，验证 `codex exec --json ... stdin`，并把 Claude 默认 args 和 README 对齐，再进入 Step 2+3（Session Store + Council Engine 联合设计）。
 
 ## Council 模型
 
@@ -110,8 +110,7 @@ council:
 ## 已知约束
 
 - PowerShell 可能把中文 Markdown 显示成乱码；文件本身是 UTF-8，读取时显式指定 UTF-8 即可。
-- coordinator 决策当前使用 Markdown 章节，便于检查，但不如严格 JSON 稳定。
-- 后续如果改为 JSON，需要设计解析失败、未知 agent、超过最大轮数等兜底策略。
+- coordinator 决策直接使用 JSON（2026-05-27 决策），兜底策略（解析失败、未知 agent、超过最大轮数）随 engine 首次实现时一并补齐。
 
 ## 已验证命令
 
