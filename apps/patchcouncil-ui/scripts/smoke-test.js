@@ -93,6 +93,21 @@ async function main() {
     const sessionId = created.session_id;
     const encoded = encodeURIComponent(sessionId);
 
+    // Wait for engine.run() to emit session_started before sending interjection/cancel
+    const eventDeadline = Date.now() + 5000;
+    let started = false;
+    while (Date.now() < eventDeadline) {
+      const resp = await fetchJson(`/api/sessions/${encoded}/events`);
+      if (resp.events && resp.events.some((e) => e.type === "session_started")) {
+        started = true;
+        break;
+      }
+      await wait(100);
+    }
+    if (!started) {
+      throw new Error("session_started event not emitted within 5s");
+    }
+
     // POST interjection
     await fetchJson(`/api/sessions/${encoded}/interjections`, {
       method: "POST",

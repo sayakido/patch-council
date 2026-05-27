@@ -65,7 +65,10 @@ function readJsonBody(req) {
     });
     req.on("end", () => {
       if (!body.trim()) return resolve({});
-      try { resolve(JSON.parse(body)); } catch (error) { reject(new Error("invalid JSON body")); }
+      try {
+        const parsed = JSON.parse(body);
+        resolve(typeof parsed === "object" && parsed !== null ? parsed : {});
+      } catch (error) { reject(new Error("invalid JSON body")); }
     });
     req.on("error", reject);
   });
