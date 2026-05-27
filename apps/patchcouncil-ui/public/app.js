@@ -6,6 +6,7 @@ let pollInterval = null;
 let lastPollSeq = -1;
 let rawEventsVisible = false;
 let discussionExpanded = false;
+let globalConfig = null;
 
 // --- Element refs ---
 const els = {
@@ -220,7 +221,6 @@ function updateComposer() {
 
 // --- Render status panel ---
 function renderStatus(session, events) {
-  var latest = events[events.length - 1];
   var rows = [
     ["Status", session ? session.status : "none"],
     ["Phase", session ? session.phase : ""],
@@ -245,11 +245,40 @@ function renderStatus(session, events) {
       tag.textContent = session.distinct_agents[i];
       els.agentList.append(tag);
     }
+  } else if (globalConfig && globalConfig.agents) {
+    // Idle state: show configured agents from config
+    var agentNames = Object.keys(globalConfig.agents);
+    for (var j = 0; j < agentNames.length; j++) {
+      var cfg = globalConfig.agents[agentNames[j]];
+      if (cfg.enabled !== false) {
+        var tag2 = document.createElement("span");
+        tag2.className = "tag agent";
+        tag2.textContent = agentNames[j];
+        els.agentList.append(tag2);
+      }
+    }
+    if (!els.agentList.childElementCount) {
+      els.agentList.textContent = "No agents enabled.";
+    }
   } else {
     els.agentList.textContent = "No agents yet.";
   }
 
-  els.latestSignal.textContent = latest ? (latest.type || "event") : "No events loaded.";
+  // Show latest coordinator decision
+  var lastDecision = null;
+  for (var k = events.length - 1; k >= 0; k--) {
+    if (events[k].type === "coordinator_decided") {
+      lastDecision = events[k];
+      break;
+    }
+  }
+  if (lastDecision) {
+    els.latestSignal.textContent = (lastDecision.coordinator || "") + ": " + (lastDecision.decision || "") + (lastDecision.next_agent ? " → " + lastDecision.next_agent : "") + " — " + (lastDecision.reason || "");
+  } else if (session) {
+    els.latestSignal.textContent = "No coordinator decision yet.";
+  } else {
+    els.latestSignal.textContent = "No events loaded.";
+  }
 }
 
 // --- Render raw events ---
@@ -300,6 +329,18 @@ function renderSessions() {
   }
 }
 
+// --- Load config ---
+async function loadConfig() {
+  try {
+    globalConfig = await fetchJson("/api/config");
+    if (!activeSessionId) {
+      renderStatus(null, []);
+    }
+  } catch (err) {
+    // config load is best-effort
+  }
+}
+
 // --- Load sessions ---
 async function loadSessions() {
   var data = await fetchJson("/api/sessions");
@@ -332,7 +373,17 @@ async function selectSession(sessionId) {
     return;
   }
 
-  var data = await fetchJson("/api/sessions/" + encodeURIComponent(sessionId) + "/events");
+  try {
+    var data = await fetchJson("/api/sessions/" + encodeURIComponent(sessionId) + "/events");
+  } catch (err) {
+    activeEvents = [];
+    renderAll();
+    return;
+  }
+
+  // Guard: if the user switched away while awaiting, discard
+  if (activeSessionId !== sessionId) return;
+
   activeEvents = Array.isArray(data.events) ? data.events : [];
   lastPollSeq = activeEvents.length > 0 ? activeEvents[activeEvents.length - 1].seq : -1;
 
@@ -443,6 +494,7 @@ els.newCouncilButton.addEventListener("click", function () {
     clearInterval(pollInterval);
     pollInterval = null;
   }
+  loadConfig().catch(function () {});
   renderAll();
 });
 
@@ -460,6 +512,7 @@ els.refreshButton.addEventListener("click", function () {
 });
 
 // --- Initial load ---
+loadConfig().catch(function () {});
 loadSessions().catch(function (error) {
   els.latestSignal.textContent = error.message;
 });
