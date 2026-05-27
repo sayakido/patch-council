@@ -81,6 +81,25 @@ async function main() {
       throw new Error("expected config response with council and agents");
     }
 
+    // PUT /api/config
+    const originalConfig = JSON.parse(JSON.stringify(config));
+    try {
+      originalConfig.council.max_turns = 4;
+      const savedConfig = await fetchJson("/api/config", {
+        method: "PUT",
+        body: JSON.stringify(originalConfig),
+      });
+      if (savedConfig.council.max_turns !== 4) {
+        throw new Error("expected PUT /api/config to persist max_turns=4");
+      }
+    } finally {
+      // Restore original config
+      await fetchJson("/api/config", {
+        method: "PUT",
+        body: JSON.stringify(config),
+      });
+    }
+
     // POST /api/sessions with FAKE_RUNTIME
     const created = await fetchJson("/api/sessions", {
       method: "POST",

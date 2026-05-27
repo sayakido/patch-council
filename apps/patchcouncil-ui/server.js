@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const url = require("node:url");
-const { findProjectRoot, loadConfig } = require("./engine/config");
+const { findProjectRoot, loadConfig, saveConfig } = require("./engine/config");
 const { SessionStore } = require("./engine/session-store");
 const { CouncilEngine } = require("./engine/council");
 const { JsonlSink, StateSnapshotSink } = require("./engine/event-sink");
@@ -178,6 +178,17 @@ async function handleApi(req, res, parsed) {
       return true;
     }
     sendJson(res, 200, loadConfig(projectRoot));
+    return true;
+  }
+
+  // PUT /api/config
+  if (pathname === "/api/config" && req.method === "PUT") {
+    if (!projectRoot) {
+      sendJson(res, 500, { error: "project root not found" });
+      return true;
+    }
+    const nextConfig = await readJsonBody(req);
+    sendJson(res, 200, saveConfig(nextConfig, projectRoot));
     return true;
   }
 
