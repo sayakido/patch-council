@@ -484,6 +484,67 @@ button.primary:hover {
   display: none;
 }
 
+/* --- Config page --- */
+.config-page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 28px;
+}
+
+.config-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.config-form,
+.config-section {
+  display: grid;
+  gap: 14px;
+}
+
+.config-section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 16px;
+}
+
+.config-section h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.config-section label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.config-section input[type="number"] {
+  width: 120px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}
+
+.button-link {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: var(--ink);
+  background: #fff;
+  text-decoration: none;
+}
+
+.button-link:hover {
+  border-color: var(--accent);
+}
+
 /* --- Responsive --- */
 @media (max-width: 1100px) {
   .workspace {

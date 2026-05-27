@@ -78,6 +78,15 @@ async function main() {
       throw new Error("index html missing workbench composer");
     }
 
+    // Config page
+    var configHtml = await fetchText("/config.html");
+    if (!configHtml.includes("PatchCouncil Config")) {
+      throw new Error("config html did not render expected title");
+    }
+    if (!configHtml.includes("maxTurnsInput")) {
+      throw new Error("config html missing max turns input");
+    }
+
     // GET /api/config
     const config = await fetchJson("/api/config");
     if (!config.council || !config.agents) {
