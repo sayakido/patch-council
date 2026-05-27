@@ -64,6 +64,26 @@ Step 5: UI Real-Time
 | 5. UI Real-Time | 30min | |
 | **合计** | **5-6.5h** | |
 
+## PR 拆分
+
+剩余工作拆为 2 个 PR：
+
+**PR #1：Step 1.5 Adapter Input + Config Alignment（~50 行）**
+
+纯前置修补，不引入新逻辑。改 cli-adapter、config、runtime-check、.gitignore，独立可测。
+
+**PR #2：Step 2+3+4+5 全栈联动（~800-1200 行）**
+
+engine + session store + CLI + UI 互相依赖：
+- 新增 `engine/events.js`、`engine/session-store.js`、`engine/council.js`、`engine/event-sink.js`
+- 新增 `cli/cli.js`
+- 新增 `scripts/council-smoke.js`（fake runtime 集成测试）
+- 修改 `engine/prompts/`（JSON 输出）、`server.js`、`public/app.js`
+
+拆开的话中间 PR 没有可运行状态，review 反而困难。作为单个 PR review ~1000 行是合理范围。
+
+完成后总代码量预计从当前 1208 行增长到 ~2000-2500 行。
+
 ## 以后
 
 1. 为 JSON 解析失败、未知 agent、最大轮数处理增加兜底行为。
