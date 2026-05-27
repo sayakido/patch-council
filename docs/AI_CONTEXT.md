@@ -20,11 +20,12 @@ aictl "自然语言请求"
 - 近期优先级仍然是完善 `council` loop，然后再做自然语言主入口。
 - 2026-05-27 的方向调整：如果目标是让用户看到 AI 讨论过程，主体验应转向本地可视化 UI，而不是继续在 Python CLI 上做复杂展示。
 - Node/TypeScript UI spike 已完成：mock session list、discussion timeline 和 work/status panel 已跑通。
-- Node runtime adapter spike 已完成：fake runtime 矩阵 + 真实 `codex --help` 已通过 Node adapter。
+- Node runtime adapter spike 已完成：fake runtime 矩阵 + 真实 Codex/Claude 检查已通过 Node adapter。
 - `opencode` 已卸载，决定替换为 `claude`（Claude Code CLI）。Claude Code CLI 原生支持 `--output-format stream-json`，与 Codex 的 `--json` 一样可直接对接 adapter 的 JSONL 解析。
 - Step 0 完成：`npm run runtime:claude` 验证通过（需 `--verbose` 配合 `--output-format stream-json`）。三个 runtime check 全部通过。
 - Step 1 完成：engine/config.js（YAML 配置加载 + 默认值合并）、engine/prompts.js（`{{ variable }}` 模板替换）、4 个 council prompt 模板已从 Python 复制到 engine/prompts/。
-- 当前：Step 1.5 Adapter Input + Config Alignment。先补 `runCliRuntime` 的 `input` / `input_mode`，验证 `codex exec --json ... stdin`，并把 Claude 默认 args 和 README 对齐，再进入 Step 2+3（Session Store + Council Engine 联合设计）。
+- Step 1.5 完成：`runCliRuntime` 已支持 `input` / `input_mode`，`codex exec --json ... -` stdin 路径和 Claude `-p ... --output-format stream-json` argument 路径都已真实测通。
+- 当前：进入 Step 2+3（Session Store + Council Engine 联合设计）。先对齐事件类型、SessionStore 写入接口和 CouncilEngine `emit(event)` 接口，再分别实现。
 
 ## Council 模型
 
@@ -71,6 +72,7 @@ Council 会话保存在：
 - 每轮模型输入只使用压缩后的 Council Brief。
 - Windows 命令行长度有限，不能长期依赖一个超长命令行参数传递完整上下文。
 - `opencode` 已从计划中移除。`claude -p "message"` 是替代方案，原生支持 `--output-format stream-json --include-partial-messages`。
+- Node adapter 的输入模式已对齐：Codex 使用 `input_mode: stdin`，Claude 使用 `input_mode: argument`。
 - Council 后续应从黑箱 CLI 输出改成可观察事件流，实时展示 coordinator 决策、agent 发言、策略覆盖和错误处理。
 - 事件模型分为两层：runtime events 表达底层 CLI 运行状态，council events 表达产品语义。不要把 Codex/Claude 的原始输出直接暴露成 council event。
 
@@ -120,9 +122,14 @@ council:
 python -m compileall -q src
 aictl doctor
 aictl council --help
+npm run check
+npm run smoke
+npm run runtime:fake
+npm run runtime:codex
+npm run runtime:claude
 ```
 
-加入上下文压缩后，也跑通过了一次真实 council smoke test。
+加入上下文压缩后，也跑通过了一次真实 council smoke test。`runtime:codex` 验证的是 `codex exec --json --sandbox read-only --ephemeral -` stdin 输入；`runtime:claude` 验证的是 Claude Code CLI stream-json + argument 输入。
 
 ## 下一步优先级
 

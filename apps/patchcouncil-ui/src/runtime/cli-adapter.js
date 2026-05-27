@@ -8,6 +8,9 @@ function runCliRuntime(options) {
   const runtime = options.runtime || "runtime";
   const command = options.command;
   const args = Array.isArray(options.args) ? options.args : [];
+  const input = typeof options.input === "string" ? options.input : "";
+  const inputMode = options.input_mode || options.inputMode || (input ? "stdin" : "none");
+  const finalArgs = buildArgs(args, input, inputMode);
   const cwd = options.cwd || process.cwd();
   const env = options.env || process.env;
   const timeoutMs = Number(options.timeoutMs || 0);
@@ -46,11 +49,11 @@ function runCliRuntime(options) {
         return;
       }
 
-      child = spawn(resolved, args, {
+      child = spawn(resolved, finalArgs, {
         cwd,
         env,
         windowsHide: true,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [inputMode === "stdin" ? "pipe" : "ignore", "pipe", "pipe"],
       });
 
       emit({
@@ -59,8 +62,12 @@ function runCliRuntime(options) {
         thread_id: threadId,
         turn_id: turnId,
         command: resolved,
-        args,
+        args: finalArgs,
       });
+
+      if (inputMode === "stdin" && child.stdin) {
+        child.stdin.end(input);
+      }
 
       child.on("error", (error) => {
         emit(turnFailed(runtime, threadId, turnId, error.message));
@@ -162,6 +169,19 @@ function runCliRuntime(options) {
       emitter.emit("event", turnFailed(runtime, threadId, turnId, reason));
     },
   };
+}
+
+function buildArgs(args, input, inputMode) {
+  if (!input || inputMode !== "argument") return args.slice();
+  const printFlagIndex = args.findIndex((arg) => arg === "-p" || arg === "--print");
+  if (printFlagIndex >= 0) {
+    return [
+      ...args.slice(0, printFlagIndex + 1),
+      input,
+      ...args.slice(printFlagIndex + 1),
+    ];
+  }
+  return [...args, input];
 }
 
 function parseRuntimeLine(line) {

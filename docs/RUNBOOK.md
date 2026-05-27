@@ -59,9 +59,11 @@ npm run runtime:claude
 
 ```text
 npm run runtime:fake    已通过
-npm run runtime:codex   已通过，验证 codex --help
-npm run runtime:claude  已通过，验证 claude stream-json
+npm run runtime:codex   已通过，验证 codex exec --json ... - 的 stdin 输入
+npm run runtime:claude  已通过，验证 claude stream-json 和 argument 输入
 ```
+
+在 Codex 桌面沙箱内，真实 CLI 可能因为认证、网络或 WinGet 安装目录权限失败；需要用与用户终端一致的非沙箱权限验证真实 CLI。
 
 启动本地 UI：
 

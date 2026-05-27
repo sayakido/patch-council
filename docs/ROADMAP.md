@@ -12,16 +12,9 @@
 - 两个 CLI 都有原生 JSON 流式输出：Codex `exec --json`、Claude `--output-format stream-json`
 - ~~Step 0: Runtime Verification~~ ✓ 完成（fake / codex / claude 全部通过）
 - ~~Step 1: Engine Config & Prompts~~ ✓ 完成（engine/config.js + engine/prompts.js + 4 个 council prompt 模板）
+- ~~Step 1.5: Adapter Input + Config Alignment~~ ✓ 完成（input/input_mode、Codex stdin、Claude stream-json args、README 对齐）
 
 马上要做（按顺序）：
-
-Step 1.5: Adapter Input + Config Alignment
-  修正进入真实 council engine 前的前置能力：
-    - 给 runCliRuntime 增加 input / input_mode 支持
-    - 验证 codex exec --json ... stdin 路径，而不只是 codex --help
-    - 同步 claude 默认 args 为 stream-json 参数
-    - README 从 OpenCode 旧说法改成 Claude
-    - 忽略 .claude/ 本地权限文件
 
 Step 2+3: Session Store + Council Engine（先对齐接口，再分别实现）
   这两个模块互相依赖，先一起设计接口，再各自实现，避免返工。
@@ -58,8 +51,8 @@ Step 5: UI Real-Time
 |---|---|---|
 | 0. Runtime Verification | 15min | ✓ 完成 |
 | 1. Config & Prompts | 30min | ✓ 完成 |
-| 1.5. Adapter Input + Config Alignment | 30-45min | 当前 |
-| 2+3. Session Store + Council Engine | 3-4h | |
+| 1.5. Adapter Input + Config Alignment | 30-45min | ✓ 完成 |
+| 2+3. Session Store + Council Engine | 3-4h | 当前 |
 | 4. CLI Entry | 15min | |
 | 5. UI Real-Time | 30min | |
 | **合计** | **5-6.5h** | |
@@ -68,9 +61,9 @@ Step 5: UI Real-Time
 
 剩余工作拆为 2 个 PR：
 
-**PR #1：Step 1.5 Adapter Input + Config Alignment（~50 行）**
+**PR #1：Step 1.5 Adapter Input + Config Alignment（已完成）**
 
-纯前置修补，不引入新逻辑。改 cli-adapter、config、runtime-check、.gitignore，独立可测。
+纯前置修补，不引入新逻辑。已改 cli-adapter、config、runtime-check、README，独立可测。
 
 **PR #2：Step 2+3+4+5 全栈联动（~800-1200 行）**
 

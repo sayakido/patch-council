@@ -1,23 +1,23 @@
 const { runCliRuntime } = require("../src/runtime/cli-adapter");
+const { DEFAULT_CONFIG } = require("../engine/config");
 
 const target = (process.argv[2] || "").trim().toLowerCase();
+const prompt = "Reply with exactly: PatchCouncil runtime check ok";
 const configs = {
   codex: {
     runtime: "codex",
-    command: "codex",
-    args: ["--help"],
-    timeoutMs: 15_000,
-  },
-  opencode: {
-    runtime: "opencode",
-    command: "opencode",
-    args: ["run", "Reply with exactly: PatchCouncil runtime check"],
+    command: DEFAULT_CONFIG.agents.codex.command,
+    args: DEFAULT_CONFIG.agents.codex.args,
+    input: prompt,
+    input_mode: DEFAULT_CONFIG.agents.codex.input_mode,
     timeoutMs: 60_000,
   },
   claude: {
     runtime: "claude",
-    command: "claude",
-    args: ["-p", "Reply with exactly: PatchCouncil runtime check ok", "--output-format", "stream-json", "--include-partial-messages", "--verbose", "--no-session-persistence", "--permission-mode", "bypassPermissions", "--max-budget-usd", "1"],
+    command: DEFAULT_CONFIG.agents.claude.command,
+    args: DEFAULT_CONFIG.agents.claude.args,
+    input: prompt,
+    input_mode: DEFAULT_CONFIG.agents.claude.input_mode,
     timeoutMs: 60_000,
   },
 };
@@ -25,7 +25,7 @@ const configs = {
 async function main() {
   const config = configs[target];
   if (!config) {
-    throw new Error("usage: node ./scripts/runtime-real-check.js codex|opencode|claude");
+    throw new Error("usage: node ./scripts/runtime-real-check.js codex|claude");
   }
 
   const events = [];

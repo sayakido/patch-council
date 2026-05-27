@@ -49,11 +49,11 @@ npm run runtime:claude
 
 这些命令会调用本机真实 AI CLI，可能需要登录状态、网络或较长等待。
 
-当前验证记录：
+检查内容：
 
 - `npm run runtime:fake` 覆盖正常完成、超时、进程崩溃、流式输出和纯文本输出。
-- `npm run runtime:codex` 已验证 `codex --help` 可通过 Node adapter 解析 `.cmd` 并流式读取。
-- `npm run runtime:claude` 已验证 Claude Code CLI `stream-json` 输出。
+- `npm run runtime:codex` 验证 `codex exec --json ... -` 可通过 stdin 接收输入。
+- `npm run runtime:claude` 验证 Claude Code CLI `stream-json` 输出和 argument 输入模式。
 
 ## 目录
 

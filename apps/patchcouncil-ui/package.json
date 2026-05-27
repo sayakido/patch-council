@@ -10,7 +10,6 @@
     "smoke": "node ./scripts/smoke-test.js",
     "runtime:fake": "node ./scripts/runtime-fake-check.js",
     "runtime:codex": "node ./scripts/runtime-real-check.js codex",
-    "runtime:opencode": "node ./scripts/runtime-real-check.js opencode",
     "runtime:claude": "node ./scripts/runtime-real-check.js claude"
   },
   "dependencies": {

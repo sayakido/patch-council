@@ -9,6 +9,8 @@ async function collectRun(args, options = {}) {
     command: process.execPath,
     args: [path.join(__dirname, "fake-runtime.js"), ...args],
     cwd: path.join(__dirname, ".."),
+    input: options.input,
+    input_mode: options.input_mode,
     timeoutMs: options.timeoutMs || 3000,
     turnId: options.turnId || `fake-${args[0]}`,
   });
@@ -46,11 +48,32 @@ async function testPlainOutput() {
   assert(events.some((event) => event.type === "runtime.reply.completed" && event.text.includes("plain line one")));
 }
 
+async function testStdinInput() {
+  const { result } = await collectRun(["echo-stdin"], {
+    input: "hello over stdin",
+    input_mode: "stdin",
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.text, "hello over stdin");
+}
+
+async function testArgumentInput() {
+  const { result, events } = await collectRun(["echo-arg"], {
+    input: "hello as argument",
+    input_mode: "argument",
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.text, "hello as argument");
+  assert(events.some((event) => event.type === "runtime.turn.started" && event.args.includes("hello as argument")));
+}
+
 async function main() {
   await testStream();
   await testCrash();
   await testTimeout();
   await testPlainOutput();
+  await testStdinInput();
+  await testArgumentInput();
   console.log("runtime fake ok");
 }
 

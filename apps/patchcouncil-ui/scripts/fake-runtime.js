@@ -10,6 +10,19 @@ async function writeDelta(text, delay = 20) {
 }
 
 async function main() {
+  if (scenario === "echo-arg") {
+    process.stdout.write(process.argv[3] || "");
+    return;
+  }
+
+  if (scenario === "echo-stdin") {
+    process.stdin.setEncoding("utf8");
+    let input = "";
+    for await (const chunk of process.stdin) input += chunk;
+    process.stdout.write(input);
+    return;
+  }
+
   if (scenario === "stream") {
     await writeDelta("Hello ");
     await writeDelta("from ");
