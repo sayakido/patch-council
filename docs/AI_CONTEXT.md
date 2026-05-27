@@ -27,7 +27,8 @@ aictl "自然语言请求"
 - Step 0 完成：`npm run runtime:claude` 验证通过（需 `--verbose` 配合 `--output-format stream-json`）。三个 runtime check 全部通过。
 - Step 1 完成：engine/config.js（YAML 配置加载 + 默认值合并）、engine/prompts.js（`{{ variable }}` 模板替换）、4 个 council prompt 模板已从 Python 复制到 engine/prompts/。
 - Step 1.5 完成：`runCliRuntime` 已支持 `input` / `input_mode`，`codex exec --json ... -` stdin 路径和 Claude `-p ... --output-format stream-json` argument 路径都已真实测通。
-- Step 2+3+4+5 完成：council engine、session store、CLI 入口、Web UI 实时轮询全部交付。`npm run smoke` 含 7 个 fake runtime 集成测试。
+- Step 2+3+4+5 完成：council engine、session store、CLI 入口、Web UI 实时轮询全部交付。
+- Workbench v1 完成并已合并：chat 工作台 UI（三栏布局）、host 控制（interjection / cancel）、session fork/continue（source metadata）、配置页面（`/config.html`）、13 个 council engine 集成测试。
 
 ## Council 模型
 
@@ -42,12 +43,17 @@ aictl "自然语言请求"
 
 ```text
 用户主题
--> coordinator route
+-> coordinator route（选择第一个 agent）
 -> 被选中的 AI agent 发言
 -> coordinator decide，判断继续或收束
+-> 策略检查（min_distinct_agents、max_turns）
 -> 可选的下一轮 AI agent 发言
 -> coordinator finalize，输出最终总结
 ```
+
+Host 可在运行中插入消息（interjection），下一轮 coordinator 路由时可见。Host 也可请求取消（cancel），engine 在当前 turn 完成后停止。
+
+已完成的 session 不可修改。Continue 操作创建新 session（fork），通过 `source_session_id` 携带前序 session 摘要。
 
 ## 会话存储
 
@@ -114,7 +120,7 @@ council:
 ## 已知约束
 
 - PowerShell 可能把中文 Markdown 显示成乱码；文件本身是 UTF-8，读取时显式指定 UTF-8 即可。
-- coordinator 决策直接使用 JSON（2026-05-27 决策），兜底策略（解析失败、未知 agent、超过最大轮数）随 engine 首次实现时一并补齐。
+- coordinator 决策直接使用 JSON。engine 已实现兜底策略（解析失败→coordinator_error、未知 agent→coordinator_error+abort、超过 max_turns→finalize）。
 
 ## 已验证命令
 
@@ -127,9 +133,9 @@ aictl council --help
 
 Node 全栈（`apps/patchcouncil-ui/`）：
 ```bash
-npm run check            # 17 JS 文件语法检查
-npm run smoke            # HTTP smoke + 7 council engine 集成测试
-npm run start            # Web UI（http://127.0.0.1:8765）
+npm run check            # 全部 JS 文件语法检查
+npm run smoke            # HTTP smoke + 13 council engine 集成测试
+npm run start            # Web UI（http://127.0.0.1:8765），含 chat 工作台 + /config.html
 npm run runtime:fake     # fake runtime 矩阵
 npm run runtime:codex    # 真实 Codex CLI 验证
 npm run runtime:claude   # 真实 Claude CLI 验证
@@ -138,4 +144,4 @@ node cli/cli.js council "话题"   # 真实 council 讨论
 
 ## 下一步优先级
 
-见 `docs/ROADMAP.md`。Node 全栈核心实现已完成（Steps 0-5），下一步进入"以后"阶段（workplan 生成、自然语言入口、分工执行）。
+见 `docs/ROADMAP.md`。Workbench v1 已交付并合并，下一步进入"以后"阶段（workplan 生成、自然语言入口、分工执行）。

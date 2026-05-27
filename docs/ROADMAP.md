@@ -9,59 +9,30 @@
 Workbench v1 状态：
 
 - 设计完成
-- 核心实现已完成（engine / session store / CLI / 实时轮询）
-- UI 持续迭代中（chat 工作台、创建/观察/打断/取消/继续会话、`/config.html`）
+- 核心实现已完成（engine / session store / CLI / 实时轮询 / chat 工作台 / 配置页面 / session fork）
+- UI 已交付（chat 工作台、创建/观察/打断/取消/继续会话、`/config.html`）
 
 当前状态：
 
-- ~~UI spike~~ ✓ 完成（已升级为 Workbench v1 chat 工作台，非仅 timeline viewer）
+- ~~UI spike~~ ✓ 完成（已升级为 Workbench v1 chat 工作台）
 - Runtime adapter spike 已完成（fake 矩阵 + `codex --help` 通过）
 - `opencode` 已卸载，决定替换为 `claude`（Claude Code CLI）
 - 两个 CLI 都有原生 JSON 流式输出：Codex `exec --json`、Claude `--output-format stream-json`
-- ~~Step 0: Runtime Verification~~ ✓ 完成（fake / codex / claude 全部通过）
-- ~~Step 1: Engine Config & Prompts~~ ✓ 完成（engine/config.js + engine/prompts.js + 4 个 council prompt 模板）
-- ~~Step 1.5: Adapter Input + Config Alignment~~ ✓ 完成（input/input_mode、Codex stdin、Claude stream-json args、README 对齐）
-- ~~Step 2+3: Session Store + Council Engine~~ ✓ 完成（engine/events.js + session-store.js + council.js + event-sink.js + prompts JSON 化）
-- ~~Step 4: CLI Entry Point~~ ✓ 完成（cli/cli.js）
-- ~~Step 5: UI Real-Time~~ ✓ 完成（server.js ?since= 增量轮询 + app.js 3s 自动轮询）
-- ~~Step 8: 文档收尾~~ ✓ 完成（README / AI_CONTEXT 标记 Python 为参考实现，Workbench v1 为当前主力）
+- ~~Step 0: Runtime Verification~~ ✓ 完成
+- ~~Step 1: Engine Config & Prompts~~ ✓ 完成
+- ~~Step 1.5: Adapter Input + Config Alignment~~ ✓ 完成
+- ~~Step 2+3: Session Store + Council Engine~~ ✓ 完成
+- ~~Step 4: CLI Entry Point~~ ✓ 完成
+- ~~Step 5: UI Real-Time~~ ✓ 完成
+- ~~Step 6: Workbench v1 (chat UI + config page + host controls + session fork)~~ ✓ 完成
+- ~~Step 7: 文档收尾~~ ✓ 完成
 
-马上要做（按顺序）：
-
-工作量预估：
-
-| Step | 预估 | 状态 |
-|---|---|---|
-| 0. Runtime Verification | 15min | ✓ 完成 |
-| 1. Config & Prompts | 30min | ✓ 完成 |
-| 1.5. Adapter Input + Config Alignment | 30-45min | ✓ 完成 |
-| 2+3. Session Store + Council Engine | 3-4h | ✓ 完成 |
-| 4. CLI Entry | 15min | ✓ 完成 |
-| 5. UI Real-Time | 30min | ✓ 完成 |
-| **合计** | **5-6.5h** | ✓ 完成 |
-
-## PR 拆分
-
-剩余工作拆为 2 个 PR：
-
-**PR #1：Step 1.5 Adapter Input + Config Alignment（已完成）**
-
-纯前置修补，不引入新逻辑。已改 cli-adapter、config、runtime-check、README，独立可测。
-
-**PR #2：Step 2+3+4+5 全栈联动（已完成，~1700 行）**
-
-已交付 6 个新文件 + 6 个修改文件：
-- 新增 `engine/events.js`、`engine/session-store.js`、`engine/council.js`、`engine/event-sink.js`
-- 新增 `cli/cli.js`
-- 新增 `scripts/council-smoke.js`（7 个 fake runtime 集成测试）
-- 修改 `engine/prompts/`（JSON 输出）、`server.js`（增量轮询）、`public/app.js`（自动轮询）
-
-完成后总代码量从 1208 行增长到 ~2900 行。
+Workbench v1 已合并到 master。以下为后续方向。
 
 ## 以后
 
-1. 为 JSON 解析失败、未知 agent、最大轮数处理增加兜底行为。
-2. 给上下文压缩和 `min_distinct_agents` 策略补单元测试。
+1. （已完成：JSON 解析失败、未知 agent、最大轮数兜底已在 engine 中实现）
+2. （已完成：13 个 council engine 集成测试覆盖关键场景）
 3. 讨论后生成结构化 workplan，但暂不自动执行。
 4. 增加自然语言主入口：
 

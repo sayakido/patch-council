@@ -67,7 +67,7 @@ Node CLI 保留作为开发/调试入口，不在用户主路径上：
 # 语法检查
 npm run check
 
-# 集成测试（HTTP + 7 council engine 测试）
+# 集成测试（HTTP smoke + 13 council engine 测试）
 npm run smoke
 
 # 运行 council 讨论（需要 Codex + Claude CLI 已安装和登录）
