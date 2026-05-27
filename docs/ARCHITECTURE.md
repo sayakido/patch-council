@@ -28,9 +28,9 @@ Adapter input alignment（Codex stdin + Claude argument 验证通过）
 opencode → claude 替换决策
 ```
 
-当前方向：Node 全栈实现（engine + session store + CLI + 实时 UI）。
+Node 全栈已交付：engine + session store + CLI + chat 工作台 UI + host 控制（interjection / cancel / fork）。
 
-CLI 定位是启动、调试和自动化入口，可视化 UI 是主要观察界面。详见 `docs/ROADMAP.md`。
+CLI 是启动、调试和自动化入口；Web 工作台是主要交互界面。详见 `docs/ROADMAP.md`。
 
 ## Council Loop
 
@@ -41,6 +41,7 @@ Council loop 由 coordinator 驱动：
 -> coordinator route prompt
 -> 被选中的 AI agent 发言
 -> coordinator decision prompt
+-> 策略检查（min_distinct_agents、max_turns）
 -> 重复，直到收束或达到最大轮数
 -> coordinator finalization prompt
 ```
@@ -53,6 +54,8 @@ coordinator 负责：
 - 输出最终总结。
 
 agent 不再永久绑定到固定角色。coordinator 应根据当前讨论状态选择合适的 agent。
+
+**Host 控制：** 用户可在运行中插入消息（interjection），下一轮 coordinator 路由时可见。也可请求取消（cancel），engine 在当前 turn 完成后停止。已完成的 session 不可修改；Continue 创建新 session（fork），通过 `source_session_id` 携带前序摘要。
 
 ## 只读行为
 
@@ -92,7 +95,7 @@ runtime events：adapter 层，描述 AI CLI 的运行事实。
 council events：产品层，描述 council 的语义事实。
 ```
 
-内部形态应接近：
+内部形态：
 
 ```text
 AI CLI raw output
@@ -102,9 +105,11 @@ AI CLI raw output
 -> council events
    -> JsonlSink 写 transcript.jsonl
    -> StateSnapshotSink 更新 state.json
-   -> UI / minimal CLI printer 消费事件
+   -> Web UI（chat 气泡投影）+ CLI printer 消费事件
    -> session 结束后从 jsonl 生成 transcript.md
 ```
+
+Web 工作台将 council event 投影为 chat 消息：agent_turn_completed → agent 气泡，coordinator_decided → 系统行，user_interjection → host 气泡，finalized → 摘要卡片。
 
 `runtime.reply.delta` 可用于实时流式渲染，但默认不写入 `transcript.jsonl`。`agent_turn_completed` 是 council 层完整发言事件，应写入完整回复内容，保证事件日志可以完整重建 session。
 
