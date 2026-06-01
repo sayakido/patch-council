@@ -2,6 +2,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { spawn } = require("child_process");
 
 function clipTextLocal(text, limit) {
   const value = String(text || "");
@@ -78,10 +79,34 @@ function ensureDesignDirectory(artifactPath) {
   fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
 }
 
+function runGitCommand(projectRoot, args) {
+  return new Promise((resolve) => {
+    const child = spawn("git", args, { cwd: projectRoot, windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (code) => resolve({ ok: code === 0, text: stdout, error: stderr || `git exited ${code}` }));
+  });
+}
+
+async function commitDesignArtifact(options) {
+  const { artifactPath, projectRoot, message, runGit = (args) => runGitCommand(projectRoot, args) } = options;
+  const add = await runGit(["add", artifactPath]);
+  if (!add.ok) return { ok: false, stage: "add", error: add.error || add.text };
+  const commit = await runGit(["commit", "-m", message]);
+  if (!commit.ok) return { ok: false, stage: "commit", error: commit.error || commit.text };
+  const rev = await runGit(["rev-parse", "--short", "HEAD"]);
+  if (!rev.ok) return { ok: false, stage: "rev-parse", error: rev.error || rev.text };
+  return { ok: true, commit: String(rev.text || "").trim() };
+}
+
 module.exports = {
   buildDesignArtifactPath,
   ensureDesignDirectory,
   parseAskOrDraft,
   summarizeDesignForBrief,
   slugifyDesignTopic,
+  runGitCommand,
+  commitDesignArtifact,
 };

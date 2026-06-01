@@ -133,6 +133,20 @@ class SessionStore {
       }
     }
 
+    const designFile = [...allEvents].reverse().find((e) => e.type === "design_file_written" || e.type === "design_revision_written");
+    const draftCommit = allEvents.find((e) => e.type === "design_commit_created");
+    const latestCommitEvent = [...allEvents].reverse().find((e) => e.type === "design_revision_committed" || e.type === "design_commit_created");
+    const latestCommitFailed = [...allEvents].reverse().find((e) => e.type === "design_commit_failed");
+
+    let designStatus = "none";
+    if (latestCommitEvent) {
+      designStatus = latestCommitEvent.type === "design_revision_committed" ? "revision_committed" : "draft_committed";
+    } else if (latestCommitFailed) {
+      designStatus = "commit_failed";
+    } else if (designFile) {
+      designStatus = designFile.type === "design_revision_written" ? "revision_written" : "file_written";
+    }
+
     const state = {
       session_id: sessionId,
       status,
@@ -151,6 +165,12 @@ class SessionStore {
       brainstorming: {
         question_count: allEvents.filter((e) => e.type === "brainstorming_question_created").length,
         lead_agent: allEvents.find((e) => e.type === "brainstorming_started")?.lead_agent || null,
+      },
+      design: {
+        artifact_path: designFile?.artifact_path || null,
+        draft_commit: draftCommit?.commit || null,
+        latest_commit: latestCommitEvent?.commit || null,
+        status: designStatus,
       },
     };
 
@@ -349,6 +369,93 @@ class SessionStore {
           lines.push(`**Message:** ${event.message}`);
           lines.push(`**Action:** ${event.action}`);
           lines.push(`**Recoverable:** ${event.recoverable}`);
+          lines.push("");
+          break;
+
+        case "brainstorming_started":
+          lines.push("## Brainstorming started");
+          lines.push("");
+          lines.push(`**Lead agent:** ${event.lead_agent}`);
+          lines.push(`**Skill:** ${event.skill_id}`);
+          lines.push(`**Max questions:** ${event.max_questions}`);
+          lines.push("");
+          break;
+
+        case "brainstorming_question_created":
+          lines.push(`## Brainstorming Q${event.question_seq}`);
+          lines.push("");
+          lines.push(`**Asked by:** ${event.agent}`);
+          lines.push(`**Question:** ${event.question}`);
+          lines.push(`**Reason:** ${event.reason}`);
+          if (Array.isArray(event.known_context) && event.known_context.length > 0) {
+            lines.push(`**Known context:** ${event.known_context.join("; ")}`);
+          }
+          if (Array.isArray(event.missing_context) && event.missing_context.length > 0) {
+            lines.push(`**Missing context:** ${event.missing_context.join("; ")}`);
+          }
+          lines.push("");
+          break;
+
+        case "brainstorming_answer_received":
+          lines.push(`## Brainstorming A${event.question_seq}`);
+          lines.push("");
+          lines.push(event.content);
+          lines.push("");
+          break;
+
+        case "design_file_written":
+          lines.push("## Design file written");
+          lines.push("");
+          lines.push(`**Path:** ${event.artifact_path}`);
+          lines.push(`**Generator:** ${event.generator}`);
+          lines.push(`**Title:** ${event.title}`);
+          lines.push(`**Revision:** ${event.revision}`);
+          lines.push("");
+          break;
+
+        case "design_commit_created":
+          lines.push("## Design draft committed");
+          lines.push("");
+          lines.push(`**Path:** ${event.artifact_path}`);
+          lines.push(`**Commit:** ${event.commit}`);
+          lines.push(`**Message:** ${event.commit_message}`);
+          lines.push("");
+          break;
+
+        case "design_commit_failed":
+          lines.push("## Design commit failed");
+          lines.push("");
+          lines.push(`**Path:** ${event.artifact_path}`);
+          lines.push(`**Revision:** ${event.revision}`);
+          lines.push(`**Stage:** ${event.stage}`);
+          lines.push(`**Error:** ${event.error}`);
+          lines.push("");
+          break;
+
+        case "design_revision_written":
+          lines.push("## Design revision written");
+          lines.push("");
+          lines.push(`**Path:** ${event.artifact_path}`);
+          lines.push(`**Generator:** ${event.generator}`);
+          lines.push(`**Revision:** ${event.revision}`);
+          lines.push("");
+          break;
+
+        case "design_revision_committed":
+          lines.push("## Design revision committed");
+          lines.push("");
+          lines.push(`**Path:** ${event.artifact_path}`);
+          lines.push(`**Commit:** ${event.commit}`);
+          lines.push(`**Message:** ${event.commit_message}`);
+          lines.push("");
+          break;
+
+        case "phase_transition":
+          lines.push("## Phase transition");
+          lines.push("");
+          lines.push(`**From:** ${event.from} → **To:** ${event.to}`);
+          lines.push(`**Trigger:** ${event.trigger}`);
+          lines.push(`**Reason:** ${event.reason}`);
           lines.push("");
           break;
       }

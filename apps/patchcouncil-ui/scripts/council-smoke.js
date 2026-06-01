@@ -239,7 +239,7 @@ async function testBrainstormingAnswerResumesIntoCouncilReview() {
   let routeSawDesign = false;
   const { engine, events } = await runEngine(config, [
     {
-      match: (p) => p.includes("一次只问一个问题"),
+      match: (p) => p.includes("brainstorming") || p.includes("一次只问一个问题"),
       response: () => {
         askCount++;
         if (askCount === 1) {

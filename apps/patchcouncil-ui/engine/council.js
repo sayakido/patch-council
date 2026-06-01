@@ -642,6 +642,15 @@ class CouncilEngine extends EventEmitter {
       return { waiting: true };
     }
 
+    // draft_design — create design draft and commit
+    await this.createDesignDraft(topic, designCouncilConfig, parsed.value);
+    this.emitEvent(events.EVENTS.PHASE_TRANSITION, {
+      from: "brainstorming",
+      to: "discussion",
+      trigger: "design_commit_created",
+      reason: "Design draft committed; entering council review.",
+    });
+    this.phase = "discussion";
     return { waiting: false, draft: true };
   }
 
@@ -668,6 +677,53 @@ class CouncilEngine extends EventEmitter {
     return await this.runDiscussionLoop(topic);
   }
 
+  async createDesignDraft(topic, designCouncilConfig, draftDecision) {
+    const design = require("./design-council");
+    const artifactPath = design.buildDesignArtifactPath(this.projectRoot, topic);
+    const brief = this.buildBrainstormingBrief(topic);
+    const draftContext = [
+      `Reason: ${draftDecision?.reason || ""}`,
+      `Known context: ${(draftDecision?.known_context || []).join("; ")}`,
+      `Missing context: ${(draftDecision?.missing_context || []).join("; ")}`,
+    ].join("\n");
+    const prompt = this.prompts.renderPrompt("design_draft.md", { topic, brief, draft_context: draftContext });
+    const agents = availableAgents(this.config.agents);
+    const result = await this.runAgent(designCouncilConfig.lead_agent, agents[designCouncilConfig.lead_agent], prompt);
+    if (!result.ok) throw new Error(result.error || "design draft failed");
+
+    design.ensureDesignDirectory(artifactPath);
+    fs.writeFileSync(artifactPath, String(result.text || "").trim() + "\n", "utf8");
+    this.emitEvent(events.EVENTS.DESIGN_FILE_WRITTEN, {
+      artifact_path: artifactPath,
+      generator: designCouncilConfig.lead_agent,
+      title: topic,
+      revision: 0,
+    });
+
+    const message = `docs: draft ${design.slugifyDesignTopic(topic)} design`;
+    const committed = await design.commitDesignArtifact({
+      artifactPath,
+      projectRoot: this.projectRoot,
+      message,
+      runGit: this.runGit,
+    });
+    if (!committed.ok) {
+      this.emitEvent(events.EVENTS.DESIGN_COMMIT_FAILED, {
+        artifact_path: artifactPath,
+        revision: 0,
+        stage: committed.stage,
+        error: committed.error,
+      });
+      return { ok: false };
+    }
+    this.emitEvent(events.EVENTS.DESIGN_COMMIT_CREATED, {
+      artifact_path: artifactPath,
+      commit: committed.commit,
+      commit_message: message,
+    });
+    return { ok: true, artifactPath, commit: committed.commit };
+  }
+
   async routeCoordinator(topic, context, agentProfiles, limits) {
     const coordinator = selectCoordinator(this.config);
     if (!coordinator) {
@@ -687,7 +743,7 @@ class CouncilEngine extends EventEmitter {
       purpose: "route",
     });
 
-    const brief = this.buildBrief(topic, context, limits, []);
+    const brief = this.buildBrief(topic, context, limits, this.eventLog);
     const prompt = this.prompts.renderPrompt("council_route.md", {
       agent_profiles: agentProfiles,
       topic,
@@ -929,6 +985,29 @@ class CouncilEngine extends EventEmitter {
     }
 
     const recentMessages = [];
+
+    // Inject design block for design_council mode
+    const latestDesign = [...log].reverse().find((e) => e.type === events.EVENTS.DESIGN_REVISION_COMMITTED || e.type === events.EVENTS.DESIGN_COMMIT_CREATED);
+    const latestFile = [...log].reverse().find((e) => e.type === events.EVENTS.DESIGN_REVISION_WRITTEN || e.type === events.EVENTS.DESIGN_FILE_WRITTEN);
+    if (this.mode === "design_council" && latestFile) {
+      let designSummary = "";
+      try {
+        const designText = fs.readFileSync(latestFile.artifact_path, "utf8");
+        designSummary = require("./design-council").summarizeDesignForBrief(designText, this.config.council?.max_design_brief_chars || 1800);
+      } catch (_) {
+        designSummary = "Design file could not be read; use artifact path.";
+      }
+      recentMessages.unshift([
+        "### Design artifact",
+        `Path: ${latestFile.artifact_path}`,
+        `Commit: ${latestDesign?.commit || "none"}`,
+        "",
+        designSummary,
+        "",
+        "Council task: review, challenge, and constructively improve the design document. Do not generate an implementation plan.",
+      ].join("\n"));
+    }
+
     const recent = log.slice(-6);
     for (const event of recent) {
       if (event.type === "agent_turn_completed") {
