@@ -193,6 +193,56 @@ async function main() {
       throw new Error("continued session_started missing source_session_id");
     }
 
+    // Workplan generation
+    const planSession = await fetchJson("/api/sessions", {
+      method: "POST",
+      body: JSON.stringify({ topic: "workplan smoke topic", mode: "council" }),
+    });
+    const planSessionId = planSession.session_id;
+    const planEncoded = encodeURIComponent(planSessionId);
+
+    const doneDeadline = Date.now() + 8000;
+    let doneState = null;
+    while (Date.now() < doneDeadline) {
+      const all = await fetchJson("/api/sessions");
+      doneState = all.sessions.find((item) => item.session_id === planSessionId);
+      if (doneState && doneState.status === "done") break;
+      await wait(200);
+    }
+    if (!doneState || doneState.status !== "done") {
+      throw new Error("workplan smoke session did not finish");
+    }
+
+    const startedWorkplan = await fetchJson(`/api/sessions/${planEncoded}/workplan`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    if (startedWorkplan.status !== "generating") {
+      throw new Error("expected workplan generation status");
+    }
+
+    const workplanDeadline = Date.now() + 5000;
+    let workplanEvents = [];
+    while (Date.now() < workplanDeadline) {
+      const resp = await fetchJson(`/api/sessions/${planEncoded}/events`);
+      workplanEvents = resp.events || [];
+      if (workplanEvents.some((event) => event.type === "workplan_created")) break;
+      await wait(200);
+    }
+    if (!workplanEvents.some((event) => event.type === "workplan_created")) {
+      throw new Error("expected workplan_created event");
+    }
+
+    let duplicateRejected = false;
+    try {
+      await fetchJson(`/api/sessions/${planEncoded}/workplan`, { method: "POST", body: JSON.stringify({}) });
+    } catch (error) {
+      duplicateRejected = /409/.test(error.message);
+    }
+    if (!duplicateRejected) {
+      throw new Error("expected duplicate workplan generation to return 409");
+    }
+
     console.log("smoke ok");
   } finally {
     child.kill();
