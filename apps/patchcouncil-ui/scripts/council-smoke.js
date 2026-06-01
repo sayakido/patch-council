@@ -1293,6 +1293,53 @@ async function testTranscriptRendersAgentSignalSummary() {
   pass();
 }
 
+async function testFinalizePromptIncludesSignalDisagreements() {
+  setupTest("finalize prompt includes signal disagreements");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.council.min_distinct_agents = 1;
+  config.council.max_turns = 1;
+
+  let capturedFinalizePrompt = "";
+
+  const readyDisagreePayload = {
+    stance: "disagree",
+    confidence: "high",
+    finalize_readiness: "ready",
+    blockers: [],
+    agreements: ["The direction is sound."],
+    disagreements: ["Prefer smaller v1 scope."],
+    recommended_next_step: "Finalize with recorded disagreement.",
+    analysis: "I disagree on scope but am ready to finalize.",
+  };
+
+  const scenarios = [
+    {
+      match: isRoutePrompt,
+      response: { ok: true, text: JSON.stringify({ decision: "continue", next_agent: "claude", role: "challenge", reason: "first" }) },
+    },
+    {
+      match: isAgentTurnPrompt,
+      response: { ok: true, text: JSON.stringify(readyDisagreePayload) },
+    },
+    {
+      match: isFinalizePrompt,
+      response: (prompt) => {
+        capturedFinalizePrompt = prompt;
+        return { ok: true, text: JSON.stringify({ consensus: "Accepted with disagreement noted.", next_steps: [] }) };
+      },
+    },
+  ];
+
+  await runEngine(config, scenarios);
+
+  assert.match(capturedFinalizePrompt, /Signal:/);
+  assert.match(capturedFinalizePrompt, /Prefer smaller v1 scope/);
+
+  teardownTest();
+  pass();
+}
+
 // --- Main ---
 
 async function main() {
@@ -1338,6 +1385,8 @@ async function main() {
   await testRouteAvoidsCoordinatorAsFirstAgent();
 
   await testTranscriptRendersAgentSignalSummary();
+
+  await testFinalizePromptIncludesSignalDisagreements();
 
   process.stderr.write(`\n${passCount}/${testCount} passed\n`);
   if (passCount < testCount) process.exit(1);

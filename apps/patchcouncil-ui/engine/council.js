@@ -188,6 +188,29 @@ function shouldAllowFinalize(eventLog, options) {
   return { allowed: true, reason: "finalize gate passed" };
 }
 
+function formatSignalForBrief(signal) {
+  if (!signal) return "";
+  const parts = [
+    `Stance: ${signal.stance || "unknown"}`,
+    `Confidence: ${signal.confidence || "unknown"}`,
+    `Readiness: ${signal.finalize_readiness || "unknown"}`,
+  ];
+  if (Array.isArray(signal.blockers) && signal.blockers.length > 0) {
+    const texts = signal.blockers.filter((b) => b && b.text).map((b) => b.text);
+    if (texts.length > 0) parts.push(`Blockers: ${texts.join("; ")}`);
+  }
+  if (Array.isArray(signal.agreements) && signal.agreements.length > 0) {
+    parts.push(`Agreements: ${signal.agreements.join("; ")}`);
+  }
+  if (Array.isArray(signal.disagreements) && signal.disagreements.length > 0) {
+    parts.push(`Disagreements: ${signal.disagreements.join("; ")}`);
+  }
+  if (signal.recommended_next_step) {
+    parts.push(`Next: ${signal.recommended_next_step}`);
+  }
+  return `**Signal:** ${parts.join(" · ")}`;
+}
+
 function resolveAgentName(agents, requested) {
   const names = Object.keys(agents);
   if (names.length === 0) return null;
@@ -744,7 +767,11 @@ class CouncilEngine extends EventEmitter {
 
     for (const event of recent) {
       if (event.type === "agent_turn_completed") {
-        messages.push(`### ${event.agent} (turn ${event.turn})\n\n${clipText(event.content, limits.maxMessageChars)}`);
+        let header = `### ${event.agent} (turn ${event.turn})`;
+        if (event.signal) {
+          header += "\n\n" + formatSignalForBrief(event.signal);
+        }
+        messages.push(`${header}\n\n${clipText(event.content, limits.maxMessageChars)}`);
       } else if (event.type === "coordinator_decided") {
         messages.push(`### Coordinator decided: ${event.decision}\nNext: ${event.next_agent || "none"}\nRole: ${event.role || "none"}\nReason: ${event.reason || ""}`);
       } else if (event.type === "policy_override") {
