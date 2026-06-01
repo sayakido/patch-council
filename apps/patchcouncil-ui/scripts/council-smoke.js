@@ -1340,6 +1340,54 @@ async function testFinalizePromptIncludesSignalDisagreements() {
   pass();
 }
 
+async function testBuildBriefPreservesEarlyAgentSignal() {
+  setupTest("buildBrief preserves early agent signal");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.council.min_distinct_agents = 1;
+  config.council.max_turns = 1;
+
+  const readyDisagree = {
+    stance: "disagree",
+    confidence: "high",
+    finalize_readiness: "ready",
+    blockers: [],
+    agreements: [],
+    disagreements: ["Scope too broad for v1."],
+    recommended_next_step: "Finalize with note.",
+    analysis: "Disagree on scope.",
+  };
+
+  let capturedFinalizePrompt = "";
+
+  const scenarios = [
+    {
+      match: isRoutePrompt,
+      response: { ok: true, text: JSON.stringify({ decision: "continue", next_agent: "claude", role: "challenge", reason: "first" }) },
+    },
+    {
+      match: isAgentTurnPrompt,
+      response: { ok: true, text: JSON.stringify(readyDisagree) },
+    },
+    {
+      match: isFinalizePrompt,
+      response: (prompt) => {
+        capturedFinalizePrompt = prompt;
+        return { ok: true, text: JSON.stringify({ consensus: "Noted.", next_steps: [] }) };
+      },
+    },
+  ];
+
+  await runEngine(config, scenarios);
+
+  // The "Latest Agent Signals" block must be present and contain the disagreement.
+  assert.match(capturedFinalizePrompt, /Latest Agent Signals/);
+  assert.match(capturedFinalizePrompt, /Scope too broad for v1/);
+
+  teardownTest();
+  pass();
+}
+
 // --- Main ---
 
 async function main() {
@@ -1387,6 +1435,8 @@ async function main() {
   await testTranscriptRendersAgentSignalSummary();
 
   await testFinalizePromptIncludesSignalDisagreements();
+
+  await testBuildBriefPreservesEarlyAgentSignal();
 
   process.stderr.write(`\n${passCount}/${testCount} passed\n`);
   if (passCount < testCount) process.exit(1);

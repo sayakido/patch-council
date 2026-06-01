@@ -762,16 +762,21 @@ class CouncilEngine extends EventEmitter {
   }
 
   buildBrief(topic, context, limits, log) {
-    const recent = log.slice(-6);
     const messages = [];
 
+    // Always include latest signal per distinct agent, independent of event window.
+    const latest = latestSignalsByAgent(log);
+    if (latest.length > 0) {
+      const entries = latest.map((item) =>
+        `- **${item.agent}** (turn ${item.turn}): ${formatSignalForBrief(item.signal)}`
+      );
+      messages.push(`### Latest Agent Signals\n\n${entries.join("\n")}`);
+    }
+
+    const recent = log.slice(-6);
     for (const event of recent) {
       if (event.type === "agent_turn_completed") {
-        let header = `### ${event.agent} (turn ${event.turn})`;
-        if (event.signal) {
-          header += "\n\n" + formatSignalForBrief(event.signal);
-        }
-        messages.push(`${header}\n\n${clipText(event.content, limits.maxMessageChars)}`);
+        messages.push(`### ${event.agent} (turn ${event.turn})\n\n${clipText(event.content, limits.maxMessageChars)}`);
       } else if (event.type === "coordinator_decided") {
         messages.push(`### Coordinator decided: ${event.decision}\nNext: ${event.next_agent || "none"}\nRole: ${event.role || "none"}\nReason: ${event.reason || ""}`);
       } else if (event.type === "policy_override") {
