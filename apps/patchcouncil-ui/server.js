@@ -374,6 +374,37 @@ async function handleApi(req, res, parsed) {
     return true;
   }
 
+  // POST /api/sessions/:id/brainstorming/answer
+  const brainstormingAnswerMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/brainstorming\/answer$/);
+  if (brainstormingAnswerMatch && req.method === "POST") {
+    const sessionId = decodeURIComponent(brainstormingAnswerMatch[1]);
+    const controller = activeSessions.get(sessionId);
+    if (!controller) {
+      sendJson(res, 409, { error: "session is not waiting for brainstorming answer" });
+      return true;
+    }
+    const body = await readJsonBody(req);
+    const event = controller.engine.addBrainstormingAnswer(body.content);
+    if (!event) {
+      sendJson(res, 400, { error: "content is required" });
+      return true;
+    }
+    controller.sessionStore.deriveState(controller.sessionDir);
+    sendJson(res, 202, { event });
+    setImmediate(async () => {
+      try {
+        await controller.engine.resumeDesignCouncil(controller.topic);
+        controller.sessionStore.deriveState(controller.sessionDir);
+        controller.sessionStore.generateTranscript(controller.sessionDir);
+      } catch (err) {
+        console.error(`[patchcouncil-ui] resume ${sessionId} error:`, err.message);
+      } finally {
+        if (!controller.engine?.waitingForUser) activeSessions.delete(sessionId);
+      }
+    });
+    return true;
+  }
+
   // POST /api/sessions/:id/workplan
   const workplanMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/workplan$/);
   if (workplanMatch && req.method === "POST") {

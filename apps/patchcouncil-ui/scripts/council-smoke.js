@@ -199,6 +199,83 @@ async function testRequiredAgentValidation() {
   pass();
 }
 
+async function testBrainstormingAskUserWaitsForAnswer() {
+  setupTest("brainstorming ask_user waits for answer");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.design_council = { lead_agent: "codex", max_questions: 8 };
+
+  const { events, result, store, session } = await runEngine(config, [
+    {
+      match: (p) => p.includes("brainstorming") || p.includes("一次只问一个问题"),
+      response: { ok: true, text: JSON.stringify({ decision: "ask_user", question: "主要使用者是谁？", reason: "需要澄清目标用户。", known_context: [], missing_context: ["目标用户"] }) },
+    },
+  ], { mode: "design_council" });
+
+  assert.equal(result.outcome, "waiting_for_user");
+  assert.ok(events.some((e) => e.type === EVENTS.BRAINSTORMING_STARTED));
+  const question = events.find((e) => e.type === EVENTS.BRAINSTORMING_QUESTION_CREATED);
+  assert.equal(question.question_seq, 1);
+  assert.equal(question.agent, "codex");
+
+  const state = store.deriveState(session.dir);
+  assert.equal(state.status, "waiting_for_user");
+  assert.equal(state.waiting_for, "brainstorming_answer");
+  assert.equal(state.brainstorming.question_count, 1);
+
+  teardownTest();
+  pass();
+}
+
+async function testBrainstormingAnswerResumesIntoCouncilReview() {
+  setupTest("brainstorming answer resumes into council review");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.design_council = { lead_agent: "codex", max_questions: 8 };
+  config.council.min_distinct_agents = 1;
+  config.council.max_turns = 1;
+
+  let askCount = 0;
+  let routeSawDesign = false;
+  const { engine, events } = await runEngine(config, [
+    {
+      match: (p) => p.includes("一次只问一个问题"),
+      response: () => {
+        askCount++;
+        if (askCount === 1) {
+          return { ok: true, text: JSON.stringify({ decision: "ask_user", question: "主要使用者是谁？", reason: "需要澄清目标用户。", known_context: [], missing_context: ["目标用户"] }) };
+        }
+        return { ok: true, text: JSON.stringify({ decision: "draft_design", reason: "用户已回答目标用户。", known_context: ["主要使用者是项目 owner"], missing_context: [] }) };
+      },
+    },
+    { match: (p) => p.includes("Markdown design doc"), response: { ok: true, text: "# Test Design\n\n## Goal\n\nBuild it.\n" } },
+    {
+      match: isRoutePrompt,
+      response: (prompt) => {
+        routeSawDesign = prompt.includes("Design artifact") && prompt.includes("abc1234");
+        return { ok: true, text: JSON.stringify({ decision: "continue", next_agent: "claude", role: "reviewer", reason: "review committed design" }) };
+      },
+    },
+    { match: isAgentTurnPrompt, response: { ok: true, text: JSON.stringify({ stance: "agree", confidence: "high", finalize_readiness: "ready", blockers: [], agreements: ["Design is reviewable."], disagreements: [], recommended_next_step: "finalize", analysis: "Review complete." }) } },
+    { match: isDecidePrompt, response: { ok: true, text: JSON.stringify({ decision: "finalize", next_agent: null, role: null, reason: "done" }) } },
+    { match: isFinalizePrompt, response: { ok: true, text: JSON.stringify({ consensus: "Design reviewed.", disagreements: "none", recommended_next_step: "generate workplan", needs_confirmation: false, next_steps: ["generate workplan"] }) } },
+  ], {
+    mode: "design_council",
+    runGit: async (args) => args[0] === "rev-parse" ? { ok: true, text: "abc1234\n" } : { ok: true, text: "" },
+  });
+
+  engine.addBrainstormingAnswer("主要使用者是项目 owner。");
+  const resumed = await engine.resumeDesignCouncil("test topic");
+
+  assert.equal(resumed.outcome, "discussion_only");
+  assert.equal(routeSawDesign, true);
+  assert.ok(events.some((e) => e.type === EVENTS.DESIGN_COMMIT_CREATED));
+  assert.ok(events.some((e) => e.type === EVENTS.AGENT_TURN_COMPLETED));
+
+  teardownTest();
+  pass();
+}
+
 async function testHappyPathSingleAgent() {
   setupTest("happy path single agent");
 
@@ -1533,6 +1610,8 @@ async function main() {
   await testDesignCouncilPureHelpers();
   await testDesignCouncilSessionStartedConfig();
   await testRequiredAgentValidation();
+  await testBrainstormingAskUserWaitsForAnswer();
+  await testBrainstormingAnswerResumesIntoCouncilReview();
   await testWorkbenchEventConstants();
   await testWorkplanEventConstants();
   await testWorkbenchStateAndTranscriptEvents();

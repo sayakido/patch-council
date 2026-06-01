@@ -1,0 +1,10 @@
+id: brainstorming_prelude
+title: Brainstorming Prelude
+version: 1
+lead_agent: codex
+limits:
+  max_questions: 8
+prompts:
+  ask_or_draft: ../../prompts/brainstorming_ask_or_draft.md
+  design_draft: ../../prompts/design_draft.md
+  design_revision: ../../prompts/design_revision.md

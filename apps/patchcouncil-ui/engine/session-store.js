@@ -85,8 +85,15 @@ class SessionStore {
     const lastEvent = allEvents.length > 0 ? allEvents[allEvents.length - 1] : null;
     const phase = lastEvent ? lastEvent.phase : "discussion";
 
+    const latestQuestion = [...allEvents].reverse().find((e) => e.type === "brainstorming_question_created");
+    const latestAnswer = [...allEvents].reverse().find((e) => e.type === "brainstorming_answer_received");
+    const waitingForBrainstorming =
+      latestQuestion && (!latestAnswer || latestAnswer.question_seq < latestQuestion.question_seq);
+
     let status = "running";
-    if (sessionFinished) {
+    if (waitingForBrainstorming) {
+      status = "waiting_for_user";
+    } else if (sessionFinished) {
       const outcome = sessionFinished.outcome;
       status = outcome === "error" || outcome === "cancelled" ? outcome : "done";
     } else if (allEvents.some((e) => e.type === "session_error")) {
@@ -140,6 +147,11 @@ class SessionStore {
       error_count: errorCount,
       has_workplan: hasWorkplan,
       workplan_status: workplanStatus,
+      waiting_for: waitingForBrainstorming ? "brainstorming_answer" : null,
+      brainstorming: {
+        question_count: allEvents.filter((e) => e.type === "brainstorming_question_created").length,
+        lead_agent: allEvents.find((e) => e.type === "brainstorming_started")?.lead_agent || null,
+      },
     };
 
     fs.writeFileSync(path.join(sessionDir, "state.json"), JSON.stringify(state, null, 2), "utf8");

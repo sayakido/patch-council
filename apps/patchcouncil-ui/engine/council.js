@@ -326,6 +326,7 @@ class CouncilEngine extends EventEmitter {
     this.cancelRequested = false;
     this.cancelReason = null;
     this.interjections = [];
+    this.waitingForUser = false;
 
     // finalize gate state
     this.finalizeGateOverrideCount = 0;
@@ -405,6 +406,8 @@ class CouncilEngine extends EventEmitter {
       );
     };
 
+    const context = collectContext(this.projectRoot, this.config);
+
     // emit session_started
     this.emitEvent(events.EVENTS.SESSION_STARTED, {
       started_at: this.startedAt,
@@ -423,6 +426,14 @@ class CouncilEngine extends EventEmitter {
       capabilities: { can_execute: false, requires_user_confirmation_before_write: true },
       agents: Object.entries(agents).map(([id, cfg]) => ({ id, command: cfg.command, roles: id === coordinator?.name ? ["coordinator", "agent"] : ["agent"] })),
     });
+
+    if (this.mode === "design_council") {
+      const preludeResult = await this.runBrainstormingPrelude(topic, context, limits, designCouncilConfig);
+      if (preludeResult.waiting) {
+        this.waitingForUser = true;
+        return { outcome: "waiting_for_user", turnCount: this.turnCount, errorCount: this.errorCount };
+      }
+    }
 
     return await this.runDiscussionLoop(topic);
   }
@@ -559,6 +570,102 @@ class CouncilEngine extends EventEmitter {
       outcome,
       errorCount: this.errorCount,
     };
+  }
+
+  buildBrainstormingBrief(topic) {
+    const parts = [`Topic: ${topic}`];
+    const questions = new Map(
+      this.eventLog
+        .filter((e) => e.type === events.EVENTS.BRAINSTORMING_QUESTION_CREATED)
+        .map((e) => [e.question_seq, e])
+    );
+    const answers = this.eventLog.filter((e) => e.type === events.EVENTS.BRAINSTORMING_ANSWER_RECEIVED);
+    for (const answer of answers) {
+      const question = questions.get(answer.question_seq);
+      parts.push(`Q${answer.question_seq}: ${question?.question || "(question unavailable)"}\nAnswer: ${answer.content}`);
+    }
+    return clipText(parts.join("\n\n"), 3000);
+  }
+
+  nextQuestionSeq() {
+    const seen = this.eventLog.filter((e) => e.type === events.EVENTS.BRAINSTORMING_QUESTION_CREATED);
+    return seen.length + 1;
+  }
+
+  async runBrainstormingPrelude(topic, context, limits, designCouncilConfig) {
+    this.emitEvent(events.EVENTS.BRAINSTORMING_STARTED, {
+      lead_agent: designCouncilConfig.lead_agent,
+      skill_id: "brainstorming_prelude",
+      max_questions: designCouncilConfig.max_questions,
+    });
+
+    const agents = availableAgents(this.config.agents);
+    const lead = agents[designCouncilConfig.lead_agent];
+    const brief = this.buildBrainstormingBrief(topic);
+    const prompt = this.prompts.renderPrompt("brainstorming_ask_or_draft.md", { topic, brief });
+    const result = await this.runAgent(designCouncilConfig.lead_agent, lead, prompt);
+    if (!result.ok) {
+      this.errorCount++;
+      this.emitEvent(events.EVENTS.COORDINATOR_ERROR, {
+        turn: null,
+        message: result.error || "brainstorming ask_or_draft failed",
+        recoverable: true,
+        action: "retry",
+        details: {},
+      });
+      return { waiting: false, error: true };
+    }
+
+    const parsed = require("./design-council").parseAskOrDraft(result.text);
+    if (!parsed.ok) {
+      this.errorCount++;
+      this.emitEvent(events.EVENTS.COORDINATOR_ERROR, {
+        turn: null,
+        message: parsed.error,
+        recoverable: true,
+        action: "retry",
+        details: { raw: String(result.text || "").slice(0, 500) },
+      });
+      return { waiting: false, error: true };
+    }
+
+    if (parsed.value.decision === "ask_user") {
+      const questionSeq = this.nextQuestionSeq();
+      this.emitEvent(events.EVENTS.BRAINSTORMING_QUESTION_CREATED, {
+        question_seq: questionSeq,
+        agent: designCouncilConfig.lead_agent,
+        question: parsed.value.question,
+        reason: parsed.value.reason,
+        known_context: parsed.value.known_context,
+        missing_context: parsed.value.missing_context,
+      });
+      return { waiting: true };
+    }
+
+    return { waiting: false, draft: true };
+  }
+
+  addBrainstormingAnswer(content) {
+    const text = String(content || "").trim();
+    if (!text) return null;
+    const latestQuestion = [...this.eventLog].reverse().find((e) => e.type === events.EVENTS.BRAINSTORMING_QUESTION_CREATED);
+    if (!latestQuestion) return null;
+    return this.emitEvent(events.EVENTS.BRAINSTORMING_ANSWER_RECEIVED, {
+      question_seq: latestQuestion.question_seq,
+      content: text,
+    });
+  }
+
+  async resumeDesignCouncil(topic) {
+    this.waitingForUser = false;
+    const limits = this.resolveCouncilLimits();
+    const designCouncilConfig = resolveDesignCouncilConfig(this.config, this.brainstormingConfig);
+    const preludeResult = await this.runBrainstormingPrelude(topic, {}, limits, designCouncilConfig);
+    if (preludeResult.waiting) {
+      this.waitingForUser = true;
+      return { outcome: "waiting_for_user", turnCount: this.turnCount, errorCount: this.errorCount };
+    }
+    return await this.runDiscussionLoop(topic);
   }
 
   async routeCoordinator(topic, context, agentProfiles, limits) {
