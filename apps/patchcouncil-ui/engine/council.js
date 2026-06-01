@@ -12,8 +12,14 @@ function clipText(text, limit) {
   return text.slice(0, head) + "\n\n[... clipped ...]\n\n" + text.slice(-tail);
 }
 
+function availableAgents(agents) {
+  return Object.fromEntries(
+    Object.entries(agents || {}).filter(([, cfg]) => cfg && cfg.enabled !== false)
+  );
+}
+
 function formatAgentProfiles(config) {
-  const agents = config.agents || {};
+  const agents = availableAgents(config.agents);
   const lines = [];
   for (const [name, cfg] of Object.entries(agents)) {
     const caps = (cfg.capabilities || []).join(", ");
@@ -81,7 +87,7 @@ function resolveAgentName(agents, requested) {
 }
 
 function selectCoordinator(config) {
-  const agents = config.agents || {};
+  const agents = availableAgents(config.agents);
   // prefer an agent with synthesize or plan capability
   for (const [name, cfg] of Object.entries(agents)) {
     const caps = cfg.capabilities || [];
@@ -196,7 +202,8 @@ class CouncilEngine extends EventEmitter {
     const maxContextChars = councilCfg.max_context_chars ?? 2500;
     const maxTranscriptChars = councilCfg.max_transcript_chars ?? 2500;
     const maxMessageChars = councilCfg.max_message_chars ?? 800;
-    const agents = this.config.agents || {};
+    const agents = availableAgents(this.config.agents);
+    const coordinator = selectCoordinator(this.config);
 
     const context = collectContext(this.projectRoot, this.config);
     const agentProfiles = formatAgentProfiles(this.config);
@@ -219,8 +226,8 @@ class CouncilEngine extends EventEmitter {
             capabilities: cfg.capabilities || [],
             write_access: Boolean(cfg.write_access),
             timeout_sec: cfg.timeout_sec,
-            enabled: cfg.enabled !== false,
-            roles: id === selectCoordinator(this.config)?.name ? ["coordinator", "agent"] : ["agent"],
+            enabled: true,
+            roles: id === coordinator?.name ? ["coordinator", "agent"] : ["agent"],
           },
         ])
       ),
@@ -237,7 +244,7 @@ class CouncilEngine extends EventEmitter {
       } : {}),
       config: sessionConfigSnapshot,
       capabilities: { can_execute: false, requires_user_confirmation_before_write: true },
-      agents: Object.entries(agents).map(([id, cfg]) => ({ id, command: cfg.command, roles: id === selectCoordinator(this.config)?.name ? ["coordinator", "agent"] : ["agent"] })),
+      agents: Object.entries(agents).map(([id, cfg]) => ({ id, command: cfg.command, roles: id === coordinator?.name ? ["coordinator", "agent"] : ["agent"] })),
     });
 
     const limits = { maxContextChars, maxTranscriptChars, maxMessageChars };
@@ -641,4 +648,4 @@ class CouncilEngine extends EventEmitter {
   }
 }
 
-module.exports = { CouncilEngine, parseJsonDecision, resolveAgentName, clipText, formatAgentProfiles, selectCoordinator, collectContext };
+module.exports = { CouncilEngine, parseJsonDecision, resolveAgentName, clipText, formatAgentProfiles, selectCoordinator, collectContext, availableAgents };

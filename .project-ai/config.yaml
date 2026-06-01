@@ -4,8 +4,10 @@ agents:
     command: codex
     args:
     - exec
+    - --json
     - --sandbox
     - read-only
+    - --ephemeral
     - '-'
     input_mode: stdin
     capabilities:
@@ -15,21 +17,27 @@ agents:
     - judge
     write_access: false
     timeout_sec: 1800
-  opencode:
+  claude:
     type: cli
-    command: opencode
+    command: claude
     args:
-    - run
+    - -p
+    - --output-format
+    - stream-json
+    - --include-partial-messages
+    - --verbose
+    - --no-session-persistence
+    - --permission-mode
+    - bypassPermissions
+    - --max-budget-usd
+    - '1'
     input_mode: argument
     capabilities:
     - challenge
     - implement
     - fix
-    write_access: true
+    write_access: false
     timeout_sec: 1800
-workflow:
-  default: codex_plan_opencode_do
-  max_fix_rounds: 2
 council:
   max_turns: 3
   min_distinct_agents: 2

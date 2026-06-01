@@ -257,6 +257,50 @@ async function testUnknownAgentAbort() {
   pass();
 }
 
+async function testDisabledAgentExcludedFromCouncil() {
+  setupTest("disabled agent excluded from council");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.agents.opencode = {
+    command: "opencode",
+    args: ["run"],
+    input_mode: "argument",
+    capabilities: ["challenge", "implement", "fix"],
+    write_access: true,
+    timeout_sec: 60,
+    enabled: false,
+  };
+  config.council.min_distinct_agents = 1;
+  config.council.max_turns = 1;
+
+  let routePrompt = "";
+  const scenarios = [
+    {
+      match: isRoutePrompt,
+      response: (prompt) => {
+        routePrompt = prompt;
+        return { ok: true, text: JSON.stringify({ decision: "continue", next_agent: "opencode", role: "test", reason: "test disabled filtering" }) };
+      },
+    },
+    {
+      match: isFinalizePrompt,
+      response: { ok: true, text: JSON.stringify({ consensus: "ok", disagreements: "none", recommended_next_step: "", needs_confirmation: false, next_steps: [] }) },
+    },
+  ];
+
+  const { events } = await runEngine(config, scenarios);
+
+  assert.ok(!routePrompt.includes("opencode"), "disabled agent should not be shown to coordinator");
+  const started = events.find((e) => e.type === EVENTS.SESSION_STARTED);
+  assert.ok(started, "missing session_started");
+  assert.ok(!started.agents.some((agent) => agent.id === "opencode"), "disabled agent should not be in session agent list");
+  assert.ok(events.some((e) => e.type === EVENTS.COORDINATOR_ERROR), "disabled agent selection should be rejected");
+  assert.equal(events.some((e) => e.type === EVENTS.AGENT_TURN_STARTED && e.agent === "opencode"), false, "disabled agent should not run");
+
+  teardownTest();
+  pass();
+}
+
 async function testMinDistinctAgentsPolicy() {
   setupTest("min_distinct_agents policy override");
 
@@ -606,6 +650,7 @@ async function main() {
   await testHappyPathTwoAgents();
   await testJsonParseFailure();
   await testUnknownAgentAbort();
+  await testDisabledAgentExcludedFromCouncil();
   await testMinDistinctAgentsPolicy();
   await testAgentCrashRecovery();
   await testMaxTurnsEnforced();
