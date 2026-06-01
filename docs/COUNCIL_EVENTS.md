@@ -258,7 +258,14 @@ session_finished
 agent_error
 coordinator_error
 session_error
+workplan_generation_started
+workplan_created
+workplan_generation_failed
 ```
+
+## Workplan events
+
+Workplan events are post-discussion artifacts. They use `phase: "finalized"` because the discussion phase has already completed. They do not change `session_finished.outcome`; consumers should use `has_workplan` and `workplan_status` in derived state.
 
 ## session_started
 
