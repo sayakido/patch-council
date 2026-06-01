@@ -1,137 +1,164 @@
-# Design Council Workflow Skill 设计
+# Brainstorming Prelude + Git-backed Design Review Council 设计
 
 ## 目标
 
-Design Council Workflow Skill 的目标是把 PatchCouncil 的默认协作方式，从“多 agent 开放式讨论后由 coordinator 收束”，演进为“以设计文档为中心的澄清、评审、修订和确认流程”。
+本设计的目标是在现有 PatchCouncil council event loop 前增加一个轻量的 brainstorming prelude，让 AI 先通过一问一答澄清用户意图，产出第一版 `design.md`，并把该设计文档提交为 git commit。随后进入现有 council loop，让其他 agent 围绕这个 design commit 进行 review / challenge / 优化。
 
-新默认流程应借鉴 Codex `brainstorming` skill 的核心机制：
+核心目标：
 
-- 先澄清用户意图，再进入设计。
-- 每次只向用户追问一个问题。
-- 设计未被用户确认前，不进入 implementation plan，不执行代码改动。
-- 设计产物必须落为可审计的 `design.md`。
-- review agent 针对 `design.md` challenge，而不是针对散乱 transcript。
-- lead agent 根据 challenge 修订 `design.md`。
-
-该能力应作为 PatchCouncil 自己的 workflow skill，而不是依赖 Codex 本地 `.codex/skills` 自动触发。
+- 用户发起 topic 后，先由 lead agent 进行 brainstorming 式一问一答。
+- 每次只问用户一个问题。
+- 信息足够后，lead agent 产出第一版 design 文档。
+- 第一版 design 文档立即形成 git commit，作为可 review 的上下文锚点。
+- 现有 council loop 复用 agent turn、signal、finalize gate 等机制，但任务固定为 review / 优化 design。
+- Reviewer agent 负责 review / challenge / constructive improvement，不直接修改 design。
+- Lead agent 根据 review 修订 design，并提交最终或下一版 commit。
+- 后续可以通过 `review commit <hash>` 的方式传递上下文。
 
 ## 非目标
 
 v1 不包含：
 
+- 通用 workflow action loop。
 - 通用 YAML 状态机解释器。
-- 任意第三方 workflow skill 安装或插件市场。
-- 直接复用 Codex 本地 `brainstorming` skill。
+- 任意第三方 workflow skill 安装。
 - browser visual companion。
 - 自动实现代码。
 - 自动生成 implementation plan。
 - 多个并行 design artifact。
-- 对旧 `council` mode 做破坏性移除。
-
-旧 `council` mode 可以保留为 open discussion / quick discussion，但不再作为默认主入口。
+- 在 design 未获用户确认前生成 workplan。
 
 ## 背景
 
-现有 council loop 的核心形态是：
+Codex `brainstorming` skill 的价值不在于它有复杂运行时代码，而在于它定义了一套强约束协作协议：
 
 ```text
-用户 topic
--> coordinator route
--> agent turn
--> coordinator decide
--> policy gate
--> finalize
+先理解上下文
+-> 一次问一个澄清问题
+-> 信息足够后形成设计
+-> 写 design spec
+-> 自检
+-> 等用户 review
+-> 再进入 implementation plan
 ```
 
-Agent Turn Signal v1 已经降低了 coordinator 过早收束风险，但它仍然围绕“讨论是否成熟”判断。对于真实产品演进，用户通常需要的不是一段最终总结，而是一份可以 review、修订、批准，并继续转成 workplan 的设计文档。
+PatchCouncil 不需要直接调用 Codex 本地 `.codex/skills`，但可以把这套行为模式作为内置 prelude。
 
-Codex `brainstorming` skill 的实现方式不是运行时状态机，而是一份强约束流程协议。它要求模型按顺序完成：
+现有 open council loop 适合多 agent review，但不适合在一开始澄清需求。如果 topic 本身还模糊，多 agent 会在缺少上下文时发散讨论，最后依赖 coordinator 收束。Agent Turn Signal v1 能减少过早 finalize，但不能替代用户澄清。
+
+因此新默认流程应拆为两段：
 
 ```text
-explore context
--> ask one clarifying question at a time
--> propose 2-3 approaches
--> present design
--> write spec
--> self-review spec
--> user review gate
--> transition to implementation plan
+Brainstorming Prelude
+-> Git-backed design draft
+-> Existing Council Design Review
 ```
 
-PatchCouncil 可以把这些流程约束产品化为 workflow skill。
-
-## 核心设计
-
-新增一个内置 workflow skill：
+## 总体流程
 
 ```text
-apps/patchcouncil-ui/engine/workflows/design-council/
-  skill.yaml
-  prompts/
-    clarify_decide.md
-    design_draft.md
-    design_review.md
-    design_revision.md
-    approval_summary.md
+用户发起 topic
+-> phase: brainstorming
+-> lead agent 一问一答澄清需求
+-> lead agent 生成 docs/designs/YYYY-MM-DD-<slug>.md
+-> git commit 第一版 design
+-> phase_transition brainstorming -> discussion
+-> 现有 council loop review / challenge 第一版 design commit
+-> lead agent 根据 review 修订 design
+-> git commit 修订版 design
+-> council finalize
+-> 用户确认后，后续 workplan 基于最终 design commit
 ```
 
-`skill.yaml` 描述角色、限制和 prompt 名称。v1 中 engine 不解释任意状态机，只加载该内置 skill 的配置和 prompt set。
+## Phase Model
 
-示例：
+新增 phase：
+
+```text
+brainstorming
+```
+
+现有 phase 保留：
+
+```text
+discussion
+finalized
+```
+
+`brainstorming` phase 是单 agent prelude，不运行 coordinator loop。
+
+`discussion` phase 复用现有 council loop，但 Council Brief 必须包含：
+
+- 原始 topic
+- brainstorming Q/A 摘要
+- design artifact path
+- draft design commit hash
+- design 文档摘要
+- 如果上下文预算允许，可包含完整 design 文档内容
+
+## Brainstorming Prelude
+
+### Lead Agent
+
+`skill.yaml` 中的 `lead_agent` 只是默认值。实际使用的 lead agent 必须通过 engine 全局 agent config 解析，允许被 session/config 覆盖。
+
+v1 默认值：
 
 ```yaml
-id: design_council
-title: Design Council
-default: true
-
-agents:
-  lead: codex
-  reviewer: claude
-
-limits:
-  max_clarification_questions: 8
-  max_review_rounds: 2
-
-prompts:
-  clarify_decide: prompts/clarify_decide.md
-  design_draft: prompts/design_draft.md
-  design_review: prompts/design_review.md
-  design_revision: prompts/design_revision.md
-  approval_summary: prompts/approval_summary.md
+lead_agent: codex
 ```
 
-## Workflow
+创建 session 时必须先完成 agent 可用性检查，这是所有 mode 的通用前置步骤：
 
-v1 固定流程：
+- coordinator agent 必须可用。
+- 本 mode 需要的 lead/reviewer agent 必须可用。
+- 不可用时直接拒绝创建 session，API 返回明确错误。
+- 不允许 session 创建成功后，运行到一半才因为 agent 不可用失败。
+
+Lead agent 使用内置 prompt 包，不直接依赖 Codex 本地 `brainstorming` skill。
+
+建议目录：
 
 ```text
-POST /api/sessions { mode: "design_council", topic }
--> workflow_skill_loaded
--> clarification loop
-   -> lead agent decides ask_user or draft_design
-   -> if ask_user: clarification_question_created, session waits
-   -> user answers: clarification_answer_received
--> design_draft_created
--> design_review_created
--> design_revision_created
--> design_approval_requested
--> user approves or asks for another revision
--> design_approved
+apps/patchcouncil-ui/engine/skills/brainstorming-prelude/
+  skill.yaml
+  prompts/
+    ask_or_draft.md
+    design_draft.md
+    design_revision.md
 ```
 
-### Clarification Loop
+`skill.yaml` 示例：
 
-Lead agent 每次只允许生成一个问题。
+```yaml
+id: brainstorming_prelude
+title: Brainstorming Prelude
+version: 1
 
-`clarify_decide.md` 输出严格 JSON：
+lead_agent: codex
+
+limits:
+  max_questions: 8
+
+prompts:
+  ask_or_draft: prompts/ask_or_draft.md
+  design_draft: prompts/design_draft.md
+  design_revision: prompts/design_revision.md
+```
+
+### Ask Or Draft Decision
+
+每轮 brainstorming 调用 lead agent，让它决定继续问用户，还是生成 design draft。
+
+严格 JSON：
 
 ```json
 {
   "decision": "ask_user",
   "question": "这个功能的主要使用者是谁？",
-  "reason": "需要明确目标用户才能判断交互复杂度。",
-  "known_context": ["用户希望默认流程替代 open council"],
-  "missing_context": ["目标用户", "成功标准"]
+  "reason": "需要明确目标用户才能判断交互和默认流程。",
+  "known_context": ["用户希望替代默认 council"],
+  "missing_context": ["目标用户"]
 }
 ```
 
@@ -140,7 +167,7 @@ Lead agent 每次只允许生成一个问题。
 ```json
 {
   "decision": "draft_design",
-  "reason": "目标、约束和成功标准已经足够起草设计。",
+  "reason": "目标、约束和成功标准已经足够生成第一版 design。",
   "known_context": ["..."],
   "missing_context": []
 }
@@ -149,242 +176,302 @@ Lead agent 每次只允许生成一个问题。
 规则：
 
 - `ask_user.question` 必须只有一个问题。
-- 问题应短、具体、可回答。
-- 达到 `max_clarification_questions` 后，如果仍缺关键信息，lead agent 必须生成带 assumptions 的 design draft，而不是无限追问。
-- 用户回答作为结构化事件追加，不覆盖已有 transcript。
+- 问题必须短、具体、可回答。
+- 用户回答后继续同一个 brainstorming prelude。
+- 达到 `max_questions` 后，如果仍缺信息，lead agent 必须生成带 assumptions 的 design，而不是无限追问。
 
-### Design Draft
+## Git-backed Design Artifact
 
-Lead agent 基于 topic、clarification Q/A 和项目上下文生成 `design.md`。
-
-Design draft 至少包含：
-
-- Problem / Goal
-- Non-goals
-- Proposed workflow
-- Event model
-- UI behavior
-- Error handling
-- Compatibility / migration
-- Testing strategy
-- Open questions or assumptions
-
-事件：
-
-```json
-{
-  "type": "design_draft_created",
-  "phase": "design",
-  "artifact": {
-    "path": "design.md",
-    "title": "Design Council Workflow Skill",
-    "content": "..."
-  },
-  "generator": "codex"
-}
-```
-
-落盘：
+第一版 design 写入项目文档目录：
 
 ```text
-.project-ai/sessions/<session-id>/design.md
+docs/designs/YYYY-MM-DD-<slug>.md
 ```
 
-### Design Review
+不要写到 `docs/superpowers/specs/`。`docs/superpowers` 是 Codex/Superpowers 协作过程文档；`docs/designs/` 是 PatchCouncil 产品产出的可 review artifact。
 
-Reviewer agent 只 review `design.md`，不重新主导设计。
+写文件前，engine 必须确保 `docs/designs/` 目录存在。
 
-`design_review.md` 输出严格 JSON：
+### Commit Rules
 
-```json
-{
-  "summary": "设计方向可行，但状态命名和等待用户语义需要更明确。",
-  "findings": [
-    {
-      "severity": "high",
-      "title": "waiting state 未定义恢复路径",
-      "detail": "clarification_question_created 后需要明确用户回答如何唤醒 workflow。"
-    }
-  ],
-  "recommendation": "revise"
-}
-```
+Design artifact 必须通过 git 管理。
 
-`recommendation` 取值：
+第一版 design 生成后：
 
 ```text
-approve | revise
+git add docs/designs/YYYY-MM-DD-<slug>.md
+git commit -m "docs: draft <topic> design"
 ```
 
-Reviewer 不直接修改 `design.md`。
+修订版 design 生成后：
 
-### Design Revision
+```text
+git add docs/designs/YYYY-MM-DD-<slug>.md
+git commit -m "docs: revise <topic> design"
+```
 
-Lead agent 根据 review findings 生成修订版 `design.md`，并记录本轮修订摘要。
+规则：
 
-事件：
+- 只允许 stage design artifact 文件。
+- 不允许 stage unrelated dirty files。
+- 如果目标 design 文件之外存在 dirty changes，不阻止提交，但必须使用精确 `git add <design-path>`。
+- 如果 design 文件已有用户未提交改动，engine 必须停止并请求用户确认，不可覆盖。
+- commit 失败时，写 `design_commit_failed`，session 进入 waiting/error 状态，由用户决定重试或手动处理。
+
+### Why Git Commit
+
+Git commit 是设计上下文的稳定锚点：
+
+- reviewer 可以直接 review `commit <hash>`。
+- 用户可以用 diff 看初稿和终稿差异。
+- 长讨论中无需把完整 design 反复塞入 prompt。
+- workplan 可以引用最终 design commit。
+- event log 只需记录 artifact path 和 commit hash，即可回溯。
+
+## Council Design Review
+
+Design draft commit 后进入现有 council loop。
+
+现有 loop 保留：
+
+```text
+coordinator route
+-> agent_turn_completed
+-> coordinator decide
+-> policy gate / finalize gate
+-> finalize
+```
+
+但 discussion goal 固定为：
+
+```text
+review / challenge / optimize the design document
+```
+
+Prompt 必须告诉 coordinator：
+
+- 当前 council 不是重新发散需求。
+- 当前 council 的对象是 design artifact 和 draft commit。
+- reviewer agent 应优先找风险、遗漏、歧义和不合理边界，也可以提出建设性补充。
+- lead agent 可以回应 review，并在需要时修订 design。
+
+### Reviewer Role
+
+Reviewer agent，例如 Claude：
+
+- review design commit / design.md。
+- 输出 findings。
+- 可以提出建设性补充、替代方案或新增约束。
+- 不直接修改 design。
+- 不生成 implementation plan。
+
+可以复用 `agent_turn_completed.signal`：
+
+- `blockers` 表示 design 不应通过的阻塞问题。
+- `disagreements` 表示设计取舍分歧。
+- `recommended_next_step` 可以建议 revise design。
+
+### Lead Revision
+
+Lead agent，例如 Codex：
+
+- 根据 reviewer findings 修订 `docs/designs/...md`。
+- 生成 revision commit。
+- 在事件中记录 source review event 和 source commit。
+
+v1 可以只允许 lead agent 修改 design artifact，不允许 reviewer 写文件。
+
+## Events
+
+新增事件：
+
+```text
+brainstorming_started
+brainstorming_question_created
+brainstorming_answer_received
+design_file_written
+design_commit_created
+design_commit_failed
+design_revision_written
+design_revision_committed
+```
+
+现有事件继续使用：
+
+```text
+session_started
+phase_transition
+coordinator_decided
+agent_turn_completed
+policy_override
+finalized
+session_finished
+```
+
+### session_started
+
+`mode=design_council` 时，`session_started` 必须快照 brainstorming prelude 的关键配置，避免后续 prompt/config 变更影响已创建 session 的可追溯性。
 
 ```json
 {
-  "type": "design_revision_created",
-  "phase": "design",
-  "revision": 1,
-  "source_review_seq": 12,
-  "artifact": {
-    "path": "design.md",
-    "title": "Design Council Workflow Skill",
-    "content": "..."
-  },
-  "generator": "codex"
-}
-```
-
-v1 默认最多 `max_review_rounds: 2`。达到上限后进入 user approval gate，并在 approval summary 中记录未采纳的 review concerns。
-
-### User Approval Gate
-
-设计经过 review / revision 后，session 进入等待用户确认状态。
-
-事件：
-
-```json
-{
-  "type": "design_approval_requested",
-  "phase": "design",
-  "artifact_path": "design.md",
-  "summary": "请 review design.md。确认后才能生成 workplan。"
-}
-```
-
-用户确认后：
-
-```json
-{
-  "type": "design_approved",
-  "phase": "design",
-  "approved_at": "2026-06-02T10:00:00+08:00",
-  "artifact_path": "design.md"
-}
-```
-
-Design 未 approve 前：
-
-- 不允许生成 workplan。
-- 不允许进入 implementation plan。
-- 不允许执行写文件任务。
-
-## Session State
-
-新增或扩展派生状态：
-
-```json
-{
+  "type": "session_started",
   "mode": "design_council",
-  "status": "waiting_for_user",
-  "waiting_for": "clarification_answer",
-  "workflow": {
-    "skill_id": "design_council",
-    "stage": "clarify",
-    "clarification_count": 2,
-    "review_round": 0
-  },
-  "has_design": false,
-  "design_status": "none"
+  "phase": "brainstorming",
+  "config": {
+    "lead_agent": "codex",
+    "max_questions": 8
+  }
 }
 ```
 
-`status` 建议取值扩展：
-
-```text
-running
-waiting_for_user
-done
-error
-cancelled
-```
-
-`design_status` 建议取值：
-
-```text
-none
-drafted
-reviewed
-revised
-approval_requested
-approved
-```
-
-## Event Model
-
-新增 council-level events：
-
-```text
-workflow_skill_loaded
-clarification_question_created
-clarification_answer_received
-design_draft_created
-design_review_created
-design_revision_created
-design_approval_requested
-design_approved
-```
-
-### workflow_skill_loaded
+### brainstorming_started
 
 ```json
 {
-  "type": "workflow_skill_loaded",
-  "phase": "design",
-  "skill_id": "design_council",
-  "skill_version": 1,
+  "type": "brainstorming_started",
+  "phase": "brainstorming",
   "lead_agent": "codex",
-  "reviewer_agent": "claude"
+  "skill_id": "brainstorming_prelude",
+  "max_questions": 8
 }
 ```
 
-### clarification_question_created
+### brainstorming_question_created
 
 ```json
 {
-  "type": "clarification_question_created",
-  "phase": "design",
-  "turn": 1,
+  "type": "brainstorming_question_created",
+  "phase": "brainstorming",
+  "question_seq": 1,
   "agent": "codex",
   "question": "这个功能的主要使用者是谁？",
-  "reason": "需要明确目标用户才能判断交互复杂度。",
-  "known_context": [],
+  "reason": "需要明确目标用户才能判断交互和默认流程。",
+  "known_context": ["用户希望替代默认 council"],
   "missing_context": ["目标用户"]
 }
 ```
 
-### clarification_answer_received
+### brainstorming_answer_received
 
 ```json
 {
-  "type": "clarification_answer_received",
-  "phase": "design",
+  "type": "brainstorming_answer_received",
+  "phase": "brainstorming",
   "question_seq": 3,
   "content": "主要使用者是项目 owner，在本地 Workbench 中使用。"
 }
 ```
 
-## UI Behavior
+### design_file_written
 
-Workbench 默认创建 `design_council` session。
+```json
+{
+  "type": "design_file_written",
+  "phase": "brainstorming",
+  "artifact_path": "docs/designs/2026-06-02-design-council.md",
+  "generator": "codex",
+  "title": "Design Council Workflow",
+  "revision": 0
+}
+```
 
-当 session `status=waiting_for_user` 且 `waiting_for=clarification_answer`：
+### design_commit_created
 
-- 主线程展示 lead agent 的问题。
-- composer placeholder 变为 `Answer Codex's question...`。
-- 用户发送内容后追加 `clarification_answer_received`，workflow 继续。
+```json
+{
+  "type": "design_commit_created",
+  "phase": "brainstorming",
+  "artifact_path": "docs/designs/2026-06-02-design-council.md",
+  "commit": "abc1234",
+  "commit_message": "docs: draft design council workflow"
+}
+```
 
-当 `design_approval_requested` 出现：
+### design_commit_failed
 
-- UI 展示 design artifact。
-- 提供 `Approve Design` 按钮。
-- 用户也可以通过 composer 反馈修改意见；该反馈触发下一轮 revision，而不是 approve。
+```json
+{
+  "type": "design_commit_failed",
+  "phase": "brainstorming",
+  "artifact_path": "docs/designs/2026-06-02-design-council.md",
+  "revision": 0,
+  "stage": "commit",
+  "error": "git commit failed"
+}
+```
 
-Raw events 继续展示完整事件。
+### design_revision_written
+
+```json
+{
+  "type": "design_revision_written",
+  "phase": "discussion",
+  "artifact_path": "docs/designs/2026-06-02-design-council.md",
+  "source_commit": "abc1234",
+  "source_review_seq": 18,
+  "generator": "codex",
+  "revision": 1
+}
+```
+
+### design_revision_committed
+
+```json
+{
+  "type": "design_revision_committed",
+  "phase": "discussion",
+  "artifact_path": "docs/designs/2026-06-02-design-council.md",
+  "source_commit": "abc1234",
+  "commit": "def5678",
+  "commit_message": "docs: revise design council workflow"
+}
+```
+
+## State Projection
+
+派生 `state.json` 增加：
+
+```json
+{
+  "mode": "design_council",
+  "phase": "brainstorming",
+  "status": "waiting_for_user",
+  "waiting_for": "brainstorming_answer",
+  "design": {
+    "artifact_path": "docs/designs/2026-06-02-design-council.md",
+    "draft_commit": "abc1234",
+    "latest_commit": "def5678",
+    "status": "revision_committed"
+  },
+  "brainstorming": {
+    "question_count": 3,
+    "lead_agent": "codex"
+  }
+}
+```
+
+`status` 新增：
+
+```text
+waiting_for_user
+```
+
+`waiting_for` v1：
+
+```text
+brainstorming_answer
+```
+
+`design.status` v1：
+
+```text
+none
+file_written
+draft_committed
+revision_written
+revision_committed
+commit_failed
+```
 
 ## API
 
@@ -394,145 +481,229 @@ Raw events 继续展示完整事件。
 POST /api/sessions
 {
   "topic": "...",
-  "mode": "design_council"
+  "mode": "design_council",
+  "brainstorming": {
+    "lead_agent": "codex",
+    "max_questions": 8
+  }
 }
 ```
 
-回答澄清问题：
+如果请求未显式传入 `brainstorming`，服务端使用默认值，并在 `session_started.config` 中记录最终生效值。
 
-v1 可复用现有 interjection API 的传输通道，但落事件时应写成 `clarification_answer_received`，不要把它混同为普通 `user_interjection`。
+回答 brainstorming 问题：
 
 ```http
-POST /api/sessions/:id/answers
+POST /api/sessions/:id/brainstorming/answer
 {
   "content": "..."
 }
 ```
 
-批准设计：
-
-```http
-POST /api/sessions/:id/design/approve
-```
-
-生成 workplan：
+继续沿用现有 workplan API：
 
 ```http
 POST /api/sessions/:id/workplan
 ```
 
-仅当存在 `design_approved` 时允许。旧 `council` mode 可继续沿用现有 done session 规则。
+规则：
 
-## Skill Loading
+- `mode=design_council` 时，workplan 应优先基于 `design.latest_commit`。
+- 如果没有 design commit，不允许生成 workplan。
 
-v1 skill loader 只支持内置 workflow skill：
+## UI
+
+Workbench 复用现有 chat 主线程。
+
+新增投影：
+
+- `brainstorming_question_created`：显示为 Codex 问题。
+- `brainstorming_answer_received`：显示为 Host 回答。
+- `design_file_written`：显示 design artifact 卡片。
+- `design_commit_created`：显示 draft commit hash。
+- `design_revision_committed`：显示 revision commit hash。
+
+当 `status=waiting_for_user` 且 `waiting_for=brainstorming_answer`：
+
+- composer placeholder 变为 `Answer Codex's question...`。
+- submit 调用 `/brainstorming/answer`。
+
+进入 discussion phase 后：
+
+- UI 回到现有 council chat 展示。
+- design artifact 卡片固定显示当前 latest commit。
+
+## Prompt Changes
+
+### brainstorming ask_or_draft
+
+必须强调：
+
+- 一次只问一个问题。
+- 不要生成实现计划。
+- 不要写代码。
+- 如果上下文足够，输出 `draft_design`。
+- 如果 topic 太大，优先问一个帮助缩小范围的问题。
+
+### design_draft
+
+必须产出 Markdown design doc，包含：
+
+- Goal
+- Non-goals
+- Context / assumptions
+- Proposed design
+- Event / state changes
+- UI / API behavior
+- Error handling
+- Testing strategy
+- Open questions
+
+### council route / decide
+
+当 session 从 brainstorming 进入 discussion，brief 必须说明：
 
 ```text
-design_council
+This council is reviewing and improving the design document.
+Do not restart requirements elicitation unless the design has a blocker that only the user can answer.
+Do not generate an implementation plan.
 ```
 
-加载过程：
+### Council Brief Budget
 
-1. 读取 `skill.yaml`。
-2. 校验 `id`、`agents`、`limits`、`prompts`。
-3. 解析 prompt 文件路径，路径必须位于该 skill 目录内。
-4. 写入 `workflow_skill_loaded`。
-5. Engine 根据硬编码的 `design_council` runner 执行流程。
+`design_council` 的 brief 不能简单沿用 open council 的小上下文预算。v1 采用保守策略：
 
-不支持：
-
-- 从任意目录加载 skill。
-- skill 自定义 JS。
-- skill 自定义状态转移代码。
-- 网络下载 skill。
-
-这样保留未来扩展空间，但 v1 不引入执行任意 workflow 的安全风险。
+- brief 必须包含 design artifact path、draft commit hash、latest commit hash 和 design 摘要。
+- brief 应包含完整 brainstorming Q/A 摘要，而不是只保留最后几条消息。
+- 如果完整 design 文档超过预算，不把全文塞入 brief。
+- reviewer/lead 需要完整内容时，通过 artifact path 或 commit hash 读取 `docs/designs/...md`。
+- 后续如果发现 agent runtime 无法可靠读取文件，再单独讨论是否提高 `design_council` 的 `max_context_chars`。
 
 ## Error Handling
 
-- Lead agent 输出无法解析：写 `workflow_error` 或 `coordinator_error`，允许 retry 一次；仍失败则 session `outcome=error`。
-- Lead agent 连续问重复问题：v1 不做语义去重，但 prompt 应要求避免重复；后续可加 repetition guard。
-- 用户回答为空：返回 400，不追加事件。
-- Reviewer 失败：允许跳过 review，但必须写 `design_review_created` 的 degraded summary，说明未完成 review。
-- Design revision 失败：保留上一版 design，session 进入 `design_approval_requested`，summary 中记录 revision failure。
-- 用户取消：沿用 `session_cancel_requested`，不再启动新的 agent call。
+- Lead agent ask/draft JSON parse failed：写 `coordinator_error` 或 `brainstorming_error`，允许 retry 一次。
+- 用户回答为空：API 返回 400，不写事件。
+- 达到 max questions：lead agent 必须 draft with assumptions。
+- Design file already has unstaged changes not produced by current session：停止并请求用户确认。
+- Git commit fails：写 `design_commit_failed`，session 等待用户处理或重试。
+- Council review reaches finalize with unresolved blocker：沿用 Agent Turn Signal v1 finalize gate。
+- 用户取消：沿用 `session_cancel_requested`。
 
 ## 与现有 Council 的关系
 
-`design_council` 是新的默认主入口。
+`design_council` 是新的默认主入口，但不是替代 event loop。
 
-现有 `council` mode 保留：
+它只是在现有 council 前增加：
 
-- 快速开放式讨论。
-- 调试 agent routing。
-- 不需要 design artifact 的轻量咨询。
+```text
+brainstorming prelude
+-> design commit
+```
 
-两者共享：
+后半段继续使用现有 council event loop。
 
-- session store
-- event log
-- runtime adapters
-- Workbench UI shell
-- config loading
-
-但 `design_council` 不复用 open council 的 coordinator loop。它有自己的 workflow runner。
+旧 `mode=council` 保留，用于快速开放式讨论。
 
 ## 与 Workplan 的关系
 
-Workplan v1 当前基于 finalized discussion summary 生成计划。
-
-Design Council 后续应让 workplan 优先基于 approved design：
+Workplan 应基于最终 design commit：
 
 ```text
-approved design.md
+design.latest_commit
+-> docs/designs/...md
 -> workplan_create.md
 -> workplan_created
 ```
 
-如果 session mode 是 `design_council`，没有 `design_approved` 时不允许生成 workplan。
+Workplan brief 应包含：
+
+- design artifact path
+- latest design commit
+- final council summary
+- unresolved blockers / disagreements
+
+## 增量实现建议
+
+### Milestone 1：Brainstorming Prelude
+
+- 新增 `brainstorming` phase。
+- 支持 lead agent ask_or_draft。
+- 支持 waiting_for_user 和 answer API。
+- 不生成 design commit。
+
+### Milestone 2：Design Draft + Draft Commit
+
+- 生成 `docs/designs/...md`。
+- 写文件前确保 `docs/designs/` 目录存在。
+- 精确 git add design path。
+- commit 第一版 design。
+- 事件记录 commit hash。
+
+### Milestone 3：Council Review Existing Loop
+
+- phase transition 到 discussion。
+- Council Brief 注入 design path / commit / summary。
+- reviewer review / challenge / constructive optimize design。
+
+### Milestone 4：Design Revision + Final Commit
+
+- lead agent 根据 review 修订 design。
+- commit revision。
+- final summary 引用 latest commit。
+
+### Milestone 5：Workplan Integration
+
+- workplan 基于 latest design commit。
+- 无 design commit 时拒绝生成 workplan。
 
 ## 测试策略
 
-Engine smoke：
+Engine tests：
 
-- 创建 `design_council` session 会写 `workflow_skill_loaded`。
-- lead agent 输出 `ask_user` 会写 `clarification_question_created`，state 变为 `waiting_for_user`。
-- 用户回答会写 `clarification_answer_received`，workflow 继续。
-- 达到足够上下文后写 `design_draft_created` 和 `design.md`。
-- reviewer 输出 findings 后写 `design_review_created`。
-- lead agent 修订后写 `design_revision_created`。
-- `design_approval_requested` 前不允许 workplan。
-- `design_approved` 后允许 workplan。
-- `max_clarification_questions` 达到后不无限追问。
-- cancel 会停止后续 agent call。
+- `design_council` session starts in brainstorming phase。
+- session 创建阶段会校验所需 agent 可用，不可用时拒绝创建。
+- `session_started.config` 记录 `lead_agent` 和 `max_questions` 的最终生效值。
+- ask_user 输出会写 `brainstorming_question_created`，state 变为 waiting。
+- `brainstorming_question_created.question_seq` 与 answer 的 `question_seq` 对齐。
+- answer API 写 `brainstorming_answer_received` 并恢复 prelude。
+- draft_design 输出会写 `design_file_written`。
+- 写 design 前会创建 `docs/designs/` 目录。
+- draft commit 只 stage design path。
+- draft commit hash 写入事件。
+- draft commit 失败会写 `design_commit_failed`，且保留已落盘 design file 状态。
+- phase transition 到 discussion 后，现有 council loop 正常运行。
+- council brief 包含 design commit。
+- revision commit 记录 source commit。
+- workplan 无 design commit 时返回 409。
 
 Prompt tests：
 
-- `clarify_decide.md` 要求一次只问一个问题。
-- `clarify_decide.md` 输出 schema 包含 `ask_user | draft_design`。
-- `design_review.md` 输出 findings schema。
-- `design_revision.md` 明确 reviewer 不直接改设计，由 lead agent 修订。
+- ask_or_draft 要求一次只问一个问题。
+- design_draft 禁止 implementation plan。
+- council route/decide 明确任务是 review/优化 design。
 
-UI / API smoke：
+UI / API tests：
 
-- waiting state 下 composer 可提交 answer。
-- approval requested 下显示 `Approve Design`。
-- raw events 能看到新增 workflow events。
-- `POST /workplan` 在未 approve 时返回 409。
+- waiting_for_user 时 composer 调用 brainstorming answer API。
+- design commit 在 UI 中可见。
+- raw events 显示 design commit 事件。
+- 旧 council mode 不受影响。
 
 ## Open Questions
 
-v1 先固定以下决策：
+当前固定：
 
-- 每问一答，不批量问多个问题。
-- lead agent 默认 codex，reviewer 默认 claude。
-- 不接入 visual companion。
-- skill loader 只加载内置 `design_council`。
+- Brainstorming prelude 是单 agent。
+- 默认 lead agent 是 codex。
+- Design draft 和 revision 都由 lead agent 修改。
+- Reviewer 不写 design 文件。
+- 第一版和修订版 design 都通过 git commit 管理。
 
-留到后续讨论：
+后续单独讨论：
 
-- Brief/context budget 的统一策略。
-- 多个 design artifact 或 design version diff UI。
-- 是否支持用户手动编辑 design.md。
-- 是否把 design review 做成可配置多 reviewer。
-- 是否把 workflow skill 扩展成通用状态机。
+- Git commit 是否需要用户显式授权开关。
+- design artifact 路径命名规则。
+- dirty worktree 下的更严格策略。
+- 是否支持用户手动编辑 design 后继续 council。
+- 是否支持多 reviewer。
+- 是否为 `design_council` 设置独立 `max_context_chars`。
