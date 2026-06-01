@@ -242,6 +242,26 @@ function selectCoordinator(config) {
   return first ? { name: first[0], config: first[1] } : null;
 }
 
+function resolveDesignCouncilConfig(config, requested = {}) {
+  const defaults = Object.assign({ lead_agent: "codex", max_questions: 8 }, config.design_council || {});
+  const merged = Object.assign({}, defaults, requested || {});
+  return {
+    lead_agent: merged.lead_agent,
+    max_questions: Math.max(1, Number(merged.max_questions || 8)),
+  };
+}
+
+function validateRequiredAgents(config, options = {}) {
+  const agents = availableAgents(config.agents);
+  const coordinator = selectCoordinator(config);
+  if (!coordinator) throw new Error("coordinator agent is not available");
+  if (options.mode === "design_council") {
+    const dc = resolveDesignCouncilConfig(config, options.brainstorming);
+    if (!agents[dc.lead_agent]) throw new Error(`design council lead agent is not available: ${dc.lead_agent}`);
+  }
+  return true;
+}
+
 function collectContext(projectRoot, config) {
   const ctxCfg = config.context || {};
   const parts = [];
@@ -284,12 +304,21 @@ class CouncilEngine extends EventEmitter {
     this.sessionId = options.sessionId;
     this.sourceMetadata = options.sourceMetadata || null;
 
+    // mode and brainstorming config
+    this.mode = options.mode || "council";
+    this.brainstormingConfig = Object.assign(
+      {},
+      options.config?.design_council || {},
+      options.brainstorming || {}
+    );
+    this.runGit = options.runGit;
+
     // per-run state
     this.seq = -1;
     this.turnCount = 0;
     this.spokenAgents = new Set();
     this.eventLog = [];
-    this.phase = "discussion";
+    this.phase = this.mode === "design_council" ? "brainstorming" : "discussion";
     this.errorCount = 0;
     this.startedAt = null;
 
@@ -335,30 +364,32 @@ class CouncilEngine extends EventEmitter {
     });
   }
 
+  resolveCouncilLimits() {
+    const council = this.config.council || {};
+    return {
+      maxContextChars: council.max_context_chars || 2500,
+      maxTranscriptChars: council.max_transcript_chars || 2500,
+      maxMessageChars: council.max_message_chars || 800,
+    };
+  }
+
   async run(topic) {
     this.startedAt = new Date().toISOString();
     const councilCfg = this.config.council || {};
     const maxTurns = councilCfg.max_turns ?? 3;
     const minDistinctAgents = councilCfg.min_distinct_agents ?? 2;
-    const maxContextChars = councilCfg.max_context_chars ?? 2500;
-    const maxTranscriptChars = councilCfg.max_transcript_chars ?? 2500;
-    const maxMessageChars = councilCfg.max_message_chars ?? 800;
+    const limits = this.resolveCouncilLimits();
+    const { maxContextChars, maxTranscriptChars, maxMessageChars } = limits;
     const agents = availableAgents(this.config.agents);
     const coordinator = selectCoordinator(this.config);
 
-    const context = collectContext(this.projectRoot, this.config);
-    const agentProfiles = formatAgentProfiles(this.config);
+    const designCouncilConfig = this.mode === "design_council"
+      ? resolveDesignCouncilConfig(this.config, this.brainstormingConfig)
+      : null;
 
-    const sourceContext = this.sourceMetadata
-      ? "### Source session\n\n" + this.sourceMetadata.source_summary + "\n\nTranscript: " + this.sourceMetadata.source_transcript_path
-      : "";
-    const contextWithSource = [sourceContext, context].filter(Boolean).join("\n\n");
-
-    // emit session_started
-    const sessionConfigSnapshot = {
-      council: councilCfg,
-      agents: Object.fromEntries(
-        Object.entries(agents).map(([id, cfg]) => [
+    const sanitizeAgentConfig = (agentMap) => {
+      return Object.fromEntries(
+        Object.entries(agentMap).map(([id, cfg]) => [
           id,
           {
             command: cfg.command,
@@ -371,24 +402,44 @@ class CouncilEngine extends EventEmitter {
             roles: id === coordinator?.name ? ["coordinator", "agent"] : ["agent"],
           },
         ])
-      ),
+      );
     };
 
+    // emit session_started
     this.emitEvent(events.EVENTS.SESSION_STARTED, {
       started_at: this.startedAt,
       topic,
-      mode: "council",
+      mode: this.mode,
       ...(this.sourceMetadata ? {
         source_session_id: this.sourceMetadata.source_session_id,
         source_summary: this.sourceMetadata.source_summary,
         source_transcript_path: this.sourceMetadata.source_transcript_path,
       } : {}),
-      config: sessionConfigSnapshot,
+      config: {
+        council: councilCfg,
+        agents: sanitizeAgentConfig(agents),
+        brainstorming: designCouncilConfig,
+      },
       capabilities: { can_execute: false, requires_user_confirmation_before_write: true },
       agents: Object.entries(agents).map(([id, cfg]) => ({ id, command: cfg.command, roles: id === coordinator?.name ? ["coordinator", "agent"] : ["agent"] })),
     });
 
-    const limits = { maxContextChars, maxTranscriptChars, maxMessageChars };
+    return await this.runDiscussionLoop(topic);
+  }
+
+  async runDiscussionLoop(topic) {
+    const limits = this.resolveCouncilLimits();
+    const councilCfg = this.config.council || {};
+    const maxTurns = councilCfg.max_turns ?? 3;
+    const minDistinctAgents = councilCfg.min_distinct_agents ?? 2;
+    const agents = availableAgents(this.config.agents);
+    const context = collectContext(this.projectRoot, this.config);
+    const agentProfiles = formatAgentProfiles(this.config);
+    const sourceContext = this.sourceMetadata
+      ? "### Source session\n\n" + this.sourceMetadata.source_summary + "\n\nTranscript: " + this.sourceMetadata.source_transcript_path
+      : "";
+    const contextWithSource = [sourceContext, context].filter(Boolean).join("\n\n");
+
     let decision = null;
 
     try {
@@ -402,64 +453,62 @@ class CouncilEngine extends EventEmitter {
       // --- cancellation checkpoint after route ---
       if (this.cancelRequested) {
         // route returned but we were cancelled; skip all agent turns
-        // (fall through to the finalize block below)
       } else {
 
         // --- agent turn loop ---
         while (decision && decision.decision === "continue" && this.turnCount < maxTurns) {
-        const agentName = resolveAgentName(agents, decision.next_agent);
-        if (!agentName) {
-          this.emitEvent(events.EVENTS.COORDINATOR_ERROR, {
-            turn: this.turnCount + 1,
-            message: `Unknown agent: ${decision.next_agent}`,
-            recoverable: true,
-            action: "fallback_finalize",
-            details: { requested: decision.next_agent, available: Object.keys(agents) },
-          });
-          this.errorCount++;
-          break;
+          const agentName = resolveAgentName(agents, decision.next_agent);
+          if (!agentName) {
+            this.emitEvent(events.EVENTS.COORDINATOR_ERROR, {
+              turn: this.turnCount + 1,
+              message: `Unknown agent: ${decision.next_agent}`,
+              recoverable: true,
+              action: "fallback_finalize",
+              details: { requested: decision.next_agent, available: Object.keys(agents) },
+            });
+            this.errorCount++;
+            break;
+          }
+
+          const agentConfig = agents[agentName];
+          const turnNum = this.turnCount + 1;
+
+          await this.runAgentTurn(turnNum, agentName, agentConfig, decision.role, topic, contextWithSource, limits);
+          this.turnCount++;
+          this.spokenAgents.add(agentName);
+
+          if (this.turnCount >= maxTurns) break;
+
+          // --- cancellation checkpoint ---
+          if (this.cancelRequested) break;
+
+          // --- decide ---
+          const decideResult = await this.decideCoordinator(topic, contextWithSource, agentProfiles, limits, maxTurns);
+          if (!decideResult) {
+            break;
+          }
+          decision = decideResult;
+
+          // --- policy check ---
+          const enforced = this.enforceMinDistinctAgents(
+            decision, agents, minDistinctAgents, maxTurns
+          );
+          if (enforced !== decision) {
+            this.emitEvent(events.EVENTS.POLICY_OVERRIDE, {
+              turn: this.turnCount,
+              policy: "min_distinct_agents",
+              original_decision: decision.decision,
+              new_decision: enforced.decision,
+              selected_agent: enforced.next_agent,
+              reason: `min_distinct_agents=${minDistinctAgents} 未满足，且尚未达到 max_turns=${maxTurns}`,
+            });
+            decision = enforced;
+          }
+
+          // --- finalize gate ---
+          decision = this.applyFinalizeGate(decision, agents, minDistinctAgents, maxTurns);
+          if (decision && decision.decision === "finalize") break;
         }
-
-        const agentConfig = agents[agentName];
-        const turnNum = this.turnCount + 1;
-
-        await this.runAgentTurn(turnNum, agentName, agentConfig, decision.role, topic, contextWithSource, limits);
-        this.turnCount++;
-        this.spokenAgents.add(agentName);
-
-        if (this.turnCount >= maxTurns) break;
-
-        // --- cancellation checkpoint ---
-        if (this.cancelRequested) break;
-
-        // --- decide ---
-        const decideResult = await this.decideCoordinator(topic, contextWithSource, agentProfiles, limits, maxTurns);
-        if (!decideResult) {
-          // JSON parse failure, already emitted coordinator_error, break to finalize
-          break;
-        }
-        decision = decideResult;
-
-        // --- policy check ---
-        const enforced = this.enforceMinDistinctAgents(
-          decision, agents, minDistinctAgents, maxTurns
-        );
-        if (enforced !== decision) {
-          this.emitEvent(events.EVENTS.POLICY_OVERRIDE, {
-            turn: this.turnCount,
-            policy: "min_distinct_agents",
-            original_decision: decision.decision,
-            new_decision: enforced.decision,
-            selected_agent: enforced.next_agent,
-            reason: `min_distinct_agents=${minDistinctAgents} 未满足，且尚未达到 max_turns=${maxTurns}`,
-          });
-          decision = enforced;
-        }
-
-        // --- finalize gate ---
-        decision = this.applyFinalizeGate(decision, agents, minDistinctAgents, maxTurns);
-        if (decision && decision.decision === "finalize") break;
-      }
       }
     } catch (err) {
       this.emitEvent(events.EVENTS.SESSION_ERROR, {
@@ -899,4 +948,5 @@ class CouncilEngine extends EventEmitter {
   }
 }
 
-module.exports = { CouncilEngine, parseJsonDecision, parseAgentTurnSignal, fallbackAgentSignal, latestSignalsByAgent, shouldAllowFinalize, resolveAgentName, clipText, formatAgentProfiles, selectCoordinator, collectContext, availableAgents };
+module.exports = { CouncilEngine, parseJsonDecision, parseAgentTurnSignal, fallbackAgentSignal, latestSignalsByAgent, shouldAllowFinalize, resolveAgentName, clipText, formatAgentProfiles, selectCoordinator, collectContext, availableAgents, resolveDesignCouncilConfig, validateRequiredAgents };
+CouncilEngine.validateRequiredAgents = validateRequiredAgents;

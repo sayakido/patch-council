@@ -162,6 +162,43 @@ async function testDesignCouncilPureHelpers() {
   pass();
 }
 
+async function testDesignCouncilSessionStartedConfig() {
+  setupTest("design council session_started config");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.design_council = { lead_agent: "claude", max_questions: 5 };
+  config.council.min_distinct_agents = 1;
+  config.council.max_turns = 1;
+
+  const { events } = await runEngine(config, [
+    {
+      match: (p) => p.includes("brainstorming") || p.includes("ask_or_draft"),
+      response: { ok: true, text: JSON.stringify({ decision: "ask_user", question: "主要使用者是谁？", reason: "需要澄清目标用户。", known_context: [], missing_context: ["目标用户"] }) },
+    },
+  ], { mode: "design_council" });
+
+  const started = events.find((e) => e.type === EVENTS.SESSION_STARTED);
+  assert.equal(started.mode, "design_council");
+  assert.equal(started.phase, "brainstorming");
+  assert.equal(started.config.brainstorming.lead_agent, "claude");
+  assert.equal(started.config.brainstorming.max_questions, 5);
+
+  teardownTest();
+  pass();
+}
+
+async function testRequiredAgentValidation() {
+  setupTest("required agent validation");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.design_council = { lead_agent: "missing-agent", max_questions: 5 };
+
+  assert.throws(() => CouncilEngine.validateRequiredAgents(config, { mode: "design_council" }), /missing-agent/);
+
+  teardownTest();
+  pass();
+}
+
 async function testHappyPathSingleAgent() {
   setupTest("happy path single agent");
 
@@ -1494,6 +1531,8 @@ async function main() {
   process.stderr.write("\nCouncil Smoke Tests\n\n");
 
   await testDesignCouncilPureHelpers();
+  await testDesignCouncilSessionStartedConfig();
+  await testRequiredAgentValidation();
   await testWorkbenchEventConstants();
   await testWorkplanEventConstants();
   await testWorkbenchStateAndTranscriptEvents();

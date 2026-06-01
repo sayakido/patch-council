@@ -274,14 +274,24 @@ async function handleApi(req, res, parsed) {
       sourceMetadata = new SessionStore(realSessionRoot).getSourceMetadata(sourceDir);
     }
 
+    const config = loadConfig(projectRoot);
+    const mode = String(body.mode || "council");
+    const brainstorming = body.brainstorming && typeof body.brainstorming === "object" ? body.brainstorming : null;
+    try {
+      CouncilEngine.validateRequiredAgents(config, { mode, brainstorming });
+    } catch (error) {
+      sendJson(res, 409, { error: error.message });
+      return true;
+    }
+
     const sessionStore = new SessionStore(realSessionRoot);
     const session = sessionStore.createSession(topic);
-    const config = loadConfig(projectRoot);
 
     const controller = {
       sessionId: session.id,
       sessionDir: session.dir,
       sessionStore,
+      topic,
       engine: null,
       currentRun: null,
     };
@@ -295,6 +305,8 @@ async function handleApi(req, res, parsed) {
       sessionDir: session.dir,
       sessionId: session.id,
       sourceMetadata,
+      mode,
+      brainstorming,
     });
     controller.engine = engine;
 
@@ -315,7 +327,9 @@ async function handleApi(req, res, parsed) {
       } catch (err) {
         console.error(`[patchcouncil-ui] session ${session.id} error:`, err.message);
       } finally {
-        activeSessions.delete(session.id);
+        if (!controller.engine?.waitingForUser) {
+          activeSessions.delete(session.id);
+        }
       }
     });
 
