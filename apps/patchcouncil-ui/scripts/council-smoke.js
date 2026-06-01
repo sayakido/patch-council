@@ -586,6 +586,99 @@ async function testWorkbenchStateAndTranscriptEvents() {
   pass();
 }
 
+async function testWorkplanEventConstants() {
+  setupTest("workplan event constants");
+
+  assert.equal(EVENTS.WORKPLAN_GENERATION_STARTED, "workplan_generation_started");
+  assert.equal(EVENTS.WORKPLAN_CREATED, "workplan_created");
+  assert.equal(EVENTS.WORKPLAN_GENERATION_FAILED, "workplan_generation_failed");
+
+  teardownTest();
+  pass();
+}
+
+async function testWorkplanStateAndTranscriptEvents() {
+  setupTest("workplan events derive state and transcript");
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("plan me");
+  store.appendEvent(session.dir, {
+    schema_version: 1,
+    seq: 0,
+    type: EVENTS.SESSION_STARTED,
+    phase: "discussion",
+    session_id: session.id,
+    started_at: "2026-06-01T10:00:00+08:00",
+    topic: "plan me",
+    mode: "council",
+    config: {},
+    capabilities: {},
+    agents: [],
+  });
+  store.appendEvent(session.dir, {
+    schema_version: 1,
+    seq: 1,
+    type: EVENTS.SESSION_FINISHED,
+    phase: "finalized",
+    session_id: session.id,
+    finished_at: "2026-06-01T10:01:00+08:00",
+    outcome: "discussion_only",
+    duration_ms: 60000,
+    turn_count: 1,
+    distinct_agents: ["codex"],
+    error_count: 0,
+  });
+  store.appendEvent(session.dir, {
+    schema_version: 1,
+    seq: 2,
+    type: EVENTS.WORKPLAN_GENERATION_STARTED,
+    phase: "finalized",
+    session_id: session.id,
+    requested_at: "2026-06-01T10:01:10+08:00",
+    generator: "codex",
+  });
+
+  let state = store.deriveState(session.dir);
+  assert.equal(state.status, "done");
+  assert.equal(state.outcome, "discussion_only");
+  assert.equal(state.has_workplan, false);
+  assert.equal(state.workplan_status, "generating");
+
+  store.appendEvent(session.dir, {
+    schema_version: 1,
+    seq: 3,
+    type: EVENTS.WORKPLAN_CREATED,
+    phase: "finalized",
+    session_id: session.id,
+    created_at: "2026-06-01T10:01:20+08:00",
+    generator: "codex",
+    source: { summary_event_seq: 1, transcript_path: "transcript.jsonl" },
+    workplan: {
+      title: "Plan title",
+      rationale: "Rationale",
+      goal: "Goal",
+      scope: ["Scope item"],
+      non_goals: ["Non goal"],
+      tasks: [{ id: "T1", title: "Task", description: "Do it", files: ["apps/patchcouncil-ui/server.js"], depends_on: [], verification: ["npm run check"] }],
+      risks: [{ risk: "Risk", mitigation: "Mitigation" }],
+    },
+  });
+
+  state = store.deriveState(session.dir);
+  const transcript = store.generateTranscript(session.dir);
+
+  assert.equal(state.status, "done");
+  assert.equal(state.outcome, "discussion_only");
+  assert.equal(state.has_workplan, true);
+  assert.equal(state.workplan_status, "created");
+  assert.match(transcript, /Workplan/);
+  assert.match(transcript, /Plan title/);
+  assert.match(transcript, /npm run check/);
+
+  teardownTest();
+  pass();
+}
+
 async function testSourceMetadataFromFinalizedSession() {
   setupTest("source metadata from finalized session");
 
@@ -645,7 +738,9 @@ async function main() {
   process.stderr.write("\nCouncil Smoke Tests\n\n");
 
   await testWorkbenchEventConstants();
+  await testWorkplanEventConstants();
   await testWorkbenchStateAndTranscriptEvents();
+  await testWorkplanStateAndTranscriptEvents();
   await testHappyPathSingleAgent();
   await testHappyPathTwoAgents();
   await testJsonParseFailure();

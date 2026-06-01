@@ -108,6 +108,24 @@ class SessionStore {
       (e) => e.type === "agent_error" || e.type === "coordinator_error" || e.type === "session_error"
     ).length;
 
+    const workplanEvents = allEvents.filter((e) =>
+      e.type === "workplan_generation_started" ||
+      e.type === "workplan_created" ||
+      e.type === "workplan_generation_failed"
+    );
+    const hasWorkplan = allEvents.some((e) => e.type === "workplan_created");
+    let workplanStatus = "none";
+    if (hasWorkplan) {
+      workplanStatus = "created";
+    } else if (workplanEvents.length > 0) {
+      const latestWorkplanEvent = workplanEvents[workplanEvents.length - 1];
+      if (latestWorkplanEvent.type === "workplan_generation_started") {
+        workplanStatus = "generating";
+      } else if (latestWorkplanEvent.type === "workplan_generation_failed") {
+        workplanStatus = "failed";
+      }
+    }
+
     const state = {
       session_id: sessionId,
       status,
@@ -120,6 +138,8 @@ class SessionStore {
       last_seq: lastSeq,
       outcome,
       error_count: errorCount,
+      has_workplan: hasWorkplan,
+      workplan_status: workplanStatus,
     };
 
     fs.writeFileSync(path.join(sessionDir, "state.json"), JSON.stringify(state, null, 2), "utf8");
@@ -233,6 +253,55 @@ class SessionStore {
           lines.push(`**Outcome:** ${event.outcome}`);
           lines.push(`**Turns:** ${event.turn_count} | **Agents:** ${event.distinct_agents.join(", ")} | **Errors:** ${event.error_count}`);
           lines.push(`**Finished:** ${event.finished_at}`);
+          break;
+
+        case "workplan_generation_started":
+          lines.push("## Workplan generation started");
+          lines.push("");
+          lines.push(`**Generator:** ${event.generator}`);
+          lines.push(`**Requested:** ${event.requested_at}`);
+          lines.push("");
+          break;
+
+        case "workplan_created": {
+          const plan = event.workplan || {};
+          lines.push("## Workplan");
+          lines.push("");
+          lines.push(`# ${plan.title || "Untitled workplan"}`);
+          lines.push("");
+          if (plan.rationale) lines.push(`**Rationale:** ${plan.rationale}`);
+          if (plan.goal) lines.push(`**Goal:** ${plan.goal}`);
+          lines.push("");
+          if (Array.isArray(plan.tasks) && plan.tasks.length > 0) {
+            lines.push("### Tasks");
+            for (const task of plan.tasks) {
+              lines.push(`- **${task.id || ""} ${task.title || "Task"}**: ${task.description || ""}`.trim());
+              if (Array.isArray(task.files) && task.files.length > 0) {
+                lines.push(`  - Files: ${task.files.join(", ")}`);
+              }
+              if (Array.isArray(task.verification) && task.verification.length > 0) {
+                lines.push(`  - Verification: ${task.verification.join("; ")}`);
+              }
+            }
+            lines.push("");
+          }
+          if (Array.isArray(plan.risks) && plan.risks.length > 0) {
+            lines.push("### Risks");
+            for (const item of plan.risks) {
+              lines.push(`- ${item.risk || ""} - ${item.mitigation || ""}`);
+            }
+            lines.push("");
+          }
+          break;
+        }
+
+        case "workplan_generation_failed":
+          lines.push("## Workplan generation failed");
+          lines.push("");
+          lines.push(`**Message:** ${event.message}`);
+          lines.push(`**Action:** ${event.action}`);
+          lines.push(`**Recoverable:** ${event.recoverable}`);
+          lines.push("");
           break;
 
         case "agent_error":

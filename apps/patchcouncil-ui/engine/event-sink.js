@@ -61,6 +61,12 @@ class CliRendererSink {
         return `[host] Interjection queued: ${(event.content || "").slice(0, 120)}`;
       case "session_cancel_requested":
         return `[council] Cancellation requested (${event.reason || "user"})`;
+      case "workplan_generation_started":
+        return `[workplan] Generating with ${event.generator}`;
+      case "workplan_created":
+        return `[workplan] Created: ${event.workplan?.title || "Untitled workplan"}`;
+      case "workplan_generation_failed":
+        return `[workplan] Failed: ${event.message}`;
       case "agent_error":
       case "coordinator_error":
       case "session_error":

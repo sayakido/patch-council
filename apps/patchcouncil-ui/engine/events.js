@@ -17,6 +17,9 @@ const EVENTS = {
   SESSION_ERROR: "session_error",
   USER_INTERJECTION: "user_interjection",
   SESSION_CANCEL_REQUESTED: "session_cancel_requested",
+  WORKPLAN_GENERATION_STARTED: "workplan_generation_started",
+  WORKPLAN_CREATED: "workplan_created",
+  WORKPLAN_GENERATION_FAILED: "workplan_generation_failed",
 };
 
 function baseEvent(sessionId, seq, type, phase) {
@@ -141,6 +144,33 @@ function sessionCancelRequested(sessionId, seq, phase, requestedAt, reason) {
   });
 }
 
+function workplanGenerationStarted(sessionId, seq, phase, requestedAt, generator) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_GENERATION_STARTED, phase), {
+    requested_at: requestedAt,
+    generator,
+  });
+}
+
+function workplanCreated(sessionId, seq, phase, createdAt, generator, source, workplan) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_CREATED, phase), {
+    created_at: createdAt,
+    generator,
+    source: source || {},
+    workplan,
+  });
+}
+
+function workplanGenerationFailed(sessionId, seq, phase, failedAt, generator, message, recoverable, action, details) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_GENERATION_FAILED, phase), {
+    failed_at: failedAt,
+    generator,
+    message,
+    recoverable,
+    action,
+    details: details || {},
+  });
+}
+
 module.exports = {
   EVENTS,
   baseEvent,
@@ -160,4 +190,7 @@ module.exports = {
   sessionError,
   userInterjection,
   sessionCancelRequested,
+  workplanGenerationStarted,
+  workplanCreated,
+  workplanGenerationFailed,
 };
