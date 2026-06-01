@@ -100,6 +100,15 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
+// --- Markdown rendering ---
+function renderMarkdown(text) {
+  if (typeof marked !== "undefined") {
+    return marked.parse(text);
+  }
+  // Fallback: escape and wrap in pre if marked is not loaded
+  return "<pre>" + escapeHtml(text) + "</pre>";
+}
+
 // --- Render a single message ---
 function renderMessage(msg) {
   var wrapper = document.createElement("div");
@@ -122,7 +131,7 @@ function renderMessage(msg) {
 
   var bubble = document.createElement("div");
   bubble.className = "bubble";
-  bubble.innerHTML = '<div class="bubble-speaker">' + escapeHtml(msg.speaker) + '</div><pre class="bubble-text">' + escapeHtml(msg.text) + '</pre>';
+  bubble.innerHTML = '<div class="bubble-speaker">' + escapeHtml(msg.speaker) + '</div><div class="bubble-text">' + renderMarkdown(msg.text) + '</div>';
 
   if (msg.kind === "host") {
     wrapper.append(bubble, avatar);
