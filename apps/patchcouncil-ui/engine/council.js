@@ -484,9 +484,20 @@ class CouncilEngine extends EventEmitter {
           const agentConfig = agents[agentName];
           const turnNum = this.turnCount + 1;
 
-          await this.runAgentTurn(turnNum, agentName, agentConfig, decision.role, topic, contextWithSource, limits);
+          const turnResult = await this.runAgentTurn(turnNum, agentName, agentConfig, decision.role, topic, contextWithSource, limits);
           this.turnCount++;
           this.spokenAgents.add(agentName);
+
+          // --- design revision trigger ---
+          if (this.mode === "design_council" && turnResult && turnResult.event) {
+            const reviewEvent = turnResult.event;
+            const signal = reviewEvent.signal;
+            const hasBlocker = signal && Array.isArray(signal.blockers) && signal.blockers.length > 0;
+            const recommendRevise = signal && typeof signal.recommended_next_step === "string" && /revise/i.test(signal.recommended_next_step);
+            if (hasBlocker || recommendRevise) {
+              await this.reviseDesignFromLatestReview(topic, reviewEvent);
+            }
+          }
 
           if (this.turnCount >= maxTurns) break;
 
@@ -590,6 +601,10 @@ class CouncilEngine extends EventEmitter {
   nextQuestionSeq() {
     const seen = this.eventLog.filter((e) => e.type === events.EVENTS.BRAINSTORMING_QUESTION_CREATED);
     return seen.length + 1;
+  }
+
+  nextDesignRevision() {
+    return this.eventLog.filter((e) => e.type === events.EVENTS.DESIGN_REVISION_WRITTEN).length + 1;
   }
 
   async runBrainstormingPrelude(topic, context, limits, designCouncilConfig) {
@@ -724,6 +739,52 @@ class CouncilEngine extends EventEmitter {
     return { ok: true, artifactPath, commit: committed.commit };
   }
 
+  async reviseDesignFromLatestReview(topic, reviewEvent) {
+    const design = require("./design-council");
+    const latestFile = [...this.eventLog].reverse().find((e) => e.type === events.EVENTS.DESIGN_FILE_WRITTEN || e.type === events.EVENTS.DESIGN_REVISION_WRITTEN);
+    const latestCommit = [...this.eventLog].reverse().find((e) => e.type === events.EVENTS.DESIGN_REVISION_COMMITTED || e.type === events.EVENTS.DESIGN_COMMIT_CREATED);
+    if (!latestFile || !latestCommit) return null;
+
+    const dc = resolveDesignCouncilConfig(this.config, this.brainstormingConfig);
+    const agents = availableAgents(this.config.agents);
+    const currentDesign = fs.readFileSync(latestFile.artifact_path, "utf8");
+    const findings = [
+      reviewEvent.content || "",
+      reviewEvent.signal ? JSON.stringify(reviewEvent.signal, null, 2) : "",
+    ].filter(Boolean).join("\n\n");
+    const prompt = this.prompts.renderPrompt("design_revision.md", { design: currentDesign, findings });
+    const result = await this.runAgent(dc.lead_agent, agents[dc.lead_agent], prompt);
+    if (!result.ok) return null;
+
+    fs.writeFileSync(latestFile.artifact_path, String(result.text || "").trim() + "\n", "utf8");
+    this.emitEvent(events.EVENTS.DESIGN_REVISION_WRITTEN, {
+      artifact_path: latestFile.artifact_path,
+      source_commit: latestCommit.commit,
+      source_review_seq: reviewEvent.seq,
+      generator: dc.lead_agent,
+      revision: this.nextDesignRevision(),
+    });
+
+    const message = `docs: revise ${design.slugifyDesignTopic(topic)} design`;
+    const committed = await design.commitDesignArtifact({ artifactPath: latestFile.artifact_path, projectRoot: this.projectRoot, message, runGit: this.runGit });
+    if (!committed.ok) {
+      this.emitEvent(events.EVENTS.DESIGN_COMMIT_FAILED, {
+        artifact_path: latestFile.artifact_path,
+        revision: this.nextDesignRevision(),
+        stage: committed.stage,
+        error: committed.error,
+      });
+      return null;
+    }
+    this.emitEvent(events.EVENTS.DESIGN_REVISION_COMMITTED, {
+      artifact_path: latestFile.artifact_path,
+      source_commit: latestCommit.commit,
+      commit: committed.commit,
+      commit_message: message,
+    });
+    return committed.commit;
+  }
+
   async routeCoordinator(topic, context, agentProfiles, limits) {
     const coordinator = selectCoordinator(this.config);
     if (!coordinator) {
@@ -850,7 +911,7 @@ class CouncilEngine extends EventEmitter {
       signalParseError = parsedSignal.error;
     }
 
-    this.emitEvent(events.EVENTS.AGENT_TURN_COMPLETED, {
+    const completedEvent = this.emitEvent(events.EVENTS.AGENT_TURN_COMPLETED, {
       turn: turnNum,
       agent: agentName,
       content,
@@ -859,6 +920,7 @@ class CouncilEngine extends EventEmitter {
       signal,
       ...(signalParseError ? { signal_parse_error: signalParseError } : {}),
     });
+    return { ok: true, event: completedEvent };
   }
 
   async decideCoordinator(topic, context, agentProfiles, limits, maxTurns) {
