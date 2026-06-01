@@ -9,6 +9,7 @@ const { CouncilEngine } = require("../engine/council");
 const { EVENTS } = require("../engine/events");
 
 const prompts = require("../engine/prompts");
+const { buildWorkplanBrief, parseWorkplanJson, validateWorkplan } = require("../engine/workplan");
 
 const MINIMAL_CONFIG = {
   agents: {
@@ -597,6 +598,73 @@ async function testWorkplanEventConstants() {
   pass();
 }
 
+async function testWorkplanJsonParserAndValidator() {
+  setupTest("workplan JSON parser and validator");
+
+  const valid = parseWorkplanJson(JSON.stringify({
+    title: "Title",
+    rationale: "Why",
+    goal: "Goal",
+    scope: ["scope"],
+    non_goals: ["no"],
+    tasks: [{ id: "T1", title: "Task", description: "Do it", files: [], depends_on: [], verification: ["npm run check"] }],
+    risks: [{ risk: "Risk", mitigation: "Mitigation" }],
+  }));
+  assert.equal(valid.ok, true);
+  assert.equal(validateWorkplan(valid.workplan).ok, true);
+
+  assert.equal(parseWorkplanJson("not json").ok, false);
+
+  const incomplete = parseWorkplanJson(JSON.stringify({ title: "Missing fields" }));
+  assert.equal(incomplete.ok, true);
+  const invalid = validateWorkplan(incomplete.workplan);
+  assert.equal(invalid.ok, false);
+  assert.match(invalid.error, /rationale|goal|tasks/);
+
+  const missingVerification = validateWorkplan({
+    title: "Title",
+    rationale: "Why",
+    goal: "Goal",
+    scope: [],
+    non_goals: [],
+    tasks: [{ id: "T1", title: "Task", description: "Do it", files: [], depends_on: [], verification: [] }],
+    risks: [],
+  });
+  assert.equal(missingVerification.ok, false);
+  assert.match(missingVerification.error, /verification/);
+
+  teardownTest();
+  pass();
+}
+
+async function testWorkplanBriefIncludesAllAgentTurns() {
+  setupTest("workplan brief includes all agent turns");
+
+  const events = [
+    { type: EVENTS.SESSION_STARTED, seq: 0, topic: "topic", session_id: "s1" },
+    { type: EVENTS.AGENT_TURN_COMPLETED, seq: 1, agent: "codex", turn: 1, content: "first file boundary apps/patchcouncil-ui/server.js" },
+    { type: EVENTS.AGENT_TURN_COMPLETED, seq: 2, agent: "claude", turn: 2, content: "second risk discussion schema validation" },
+    { type: EVENTS.FINALIZED, seq: 3, summary: "summary", next_steps: ["generate plan"] },
+  ];
+
+  const brief = buildWorkplanBrief(events, {
+    maxContextChars: 2000,
+    maxTranscriptChars: 2000,
+    maxMessageChars: 200,
+    recentMessageChars: 400,
+    transcriptPath: ".project-ai/sessions/s1/transcript.jsonl",
+  });
+
+  assert.match(brief, /topic/);
+  assert.match(brief, /summary/);
+  assert.match(brief, /first file boundary/);
+  assert.match(brief, /second risk discussion/);
+  assert.match(brief, /transcript.jsonl/);
+
+  teardownTest();
+  pass();
+}
+
 async function testWorkplanStateAndTranscriptEvents() {
   setupTest("workplan events derive state and transcript");
 
@@ -740,6 +808,8 @@ async function main() {
   await testWorkbenchEventConstants();
   await testWorkplanEventConstants();
   await testWorkbenchStateAndTranscriptEvents();
+  await testWorkplanJsonParserAndValidator();
+  await testWorkplanBriefIncludesAllAgentTurns();
   await testWorkplanStateAndTranscriptEvents();
   await testHappyPathSingleAgent();
   await testHappyPathTwoAgents();
