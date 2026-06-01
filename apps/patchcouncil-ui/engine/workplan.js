@@ -109,9 +109,130 @@ function selectWorkplanGenerator(config) {
   return selectCoordinator(config);
 }
 
+function nextSeq(allEvents) {
+  return allEvents.reduce((max, event) => Math.max(max, Number(event.seq)), -1) + 1;
+}
+
+function doneSessionState(sessionStore, sessionDir) {
+  const state = sessionStore.deriveState(sessionDir);
+  return state.status === "done";
+}
+
+async function generateWorkplanForSession(options) {
+  const { config, sessionStore, sessionDir, sessionId, prompts, runAgent, onEvent } = options;
+  const allEvents = sessionStore.readEvents(sessionDir);
+
+  if (!doneSessionState(sessionStore, sessionDir)) {
+    return { ok: false, error: "workplan can only be generated for done sessions", status: 409 };
+  }
+  if (allEvents.some((event) => event.type === "workplan_created")) {
+    return { ok: false, error: "workplan already exists", status: 409 };
+  }
+  const lastWorkplanEvent = [...allEvents].reverse().find((event) =>
+    event.type === "workplan_generation_started" ||
+    event.type === "workplan_created" ||
+    event.type === "workplan_generation_failed"
+  );
+  if (lastWorkplanEvent?.type === "workplan_generation_started") {
+    return { ok: false, error: "workplan generation already in progress", status: 409 };
+  }
+
+  const generator = selectWorkplanGenerator(config);
+  if (!generator) {
+    return { ok: false, error: "no available workplan generator", status: 409 };
+  }
+
+  let seq = nextSeq(allEvents);
+  onEvent({
+    schema_version: 1,
+    seq: seq++,
+    type: "workplan_generation_started",
+    phase: "finalized",
+    session_id: sessionId,
+    requested_at: new Date().toISOString(),
+    generator: generator.name,
+  });
+
+  const updatedEvents = sessionStore.readEvents(sessionDir);
+  const started = updatedEvents.find((event) => event.type === "session_started");
+  const brief = buildWorkplanBrief(updatedEvents, {
+    transcriptPath: path.join(sessionDir, "transcript.jsonl"),
+    maxTranscriptChars: config.council?.max_workplan_transcript_chars || 8000,
+    maxMessageChars: config.council?.max_workplan_message_chars || 1200,
+    recentMessageChars: config.council?.max_workplan_recent_message_chars || 2000,
+  });
+  const prompt = prompts.renderPrompt("workplan_create.md", {
+    topic: started?.topic || "",
+    brief,
+  });
+
+  const result = await runAgent(generator.name, generator.config, prompt);
+  if (!result.ok) {
+    const failed = {
+      schema_version: 1,
+      seq,
+      type: "workplan_generation_failed",
+      phase: "finalized",
+      session_id: sessionId,
+      failed_at: new Date().toISOString(),
+      generator: generator.name,
+      message: result.error || "workplan generation failed",
+      recoverable: true,
+      action: "show_error",
+      details: {},
+    };
+    onEvent(failed);
+    sessionStore.deriveState(sessionDir);
+    sessionStore.generateTranscript(sessionDir);
+    return { ok: false, error: failed.message, status: 200 };
+  }
+
+  const parsed = parseWorkplanJson(result.text);
+  const validation = parsed.ok ? validateWorkplan(parsed.workplan) : parsed;
+  if (!parsed.ok || !validation.ok) {
+    const failed = {
+      schema_version: 1,
+      seq,
+      type: "workplan_generation_failed",
+      phase: "finalized",
+      session_id: sessionId,
+      failed_at: new Date().toISOString(),
+      generator: generator.name,
+      message: parsed.ok ? validation.error : parsed.error,
+      recoverable: true,
+      action: "show_error",
+      details: { raw: String(result.text || "").slice(0, 500) },
+    };
+    onEvent(failed);
+    sessionStore.deriveState(sessionDir);
+    sessionStore.generateTranscript(sessionDir);
+    return { ok: false, error: failed.message, status: 200 };
+  }
+
+  const finalized = [...updatedEvents].reverse().find((event) => event.type === "finalized");
+  onEvent({
+    schema_version: 1,
+    seq,
+    type: "workplan_created",
+    phase: "finalized",
+    session_id: sessionId,
+    created_at: new Date().toISOString(),
+    generator: generator.name,
+    source: {
+      summary_event_seq: finalized ? finalized.seq : null,
+      transcript_path: path.join(sessionDir, "transcript.jsonl"),
+    },
+    workplan: parsed.workplan,
+  });
+  sessionStore.deriveState(sessionDir);
+  sessionStore.generateTranscript(sessionDir);
+  return { ok: true, workplan: parsed.workplan, status: 200 };
+}
+
 module.exports = {
   parseWorkplanJson,
   validateWorkplan,
   buildWorkplanBrief,
   selectWorkplanGenerator,
+  generateWorkplanForSession,
 };

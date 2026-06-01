@@ -9,7 +9,7 @@ const { CouncilEngine } = require("../engine/council");
 const { EVENTS } = require("../engine/events");
 
 const prompts = require("../engine/prompts");
-const { buildWorkplanBrief, parseWorkplanJson, validateWorkplan } = require("../engine/workplan");
+const { buildWorkplanBrief, parseWorkplanJson, validateWorkplan, generateWorkplanForSession } = require("../engine/workplan");
 
 const MINIMAL_CONFIG = {
   agents: {
@@ -637,6 +637,84 @@ async function testWorkplanJsonParserAndValidator() {
   pass();
 }
 
+async function testGenerateWorkplanForDoneSession() {
+  setupTest("generate workplan for done session");
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("topic");
+  const plan = {
+    title: "Plan",
+    rationale: "Why",
+    goal: "Goal",
+    scope: ["scope"],
+    non_goals: ["no execution"],
+    tasks: [{ id: "T1", title: "Task", description: "Do it", files: [], depends_on: [], verification: ["npm run check"] }],
+    risks: [],
+  };
+
+  for (const event of [
+    { schema_version: 1, seq: 0, type: EVENTS.SESSION_STARTED, phase: "discussion", session_id: session.id, started_at: "2026-06-01T10:00:00+08:00", topic: "topic", mode: "council", config: {}, capabilities: {}, agents: [] },
+    { schema_version: 1, seq: 1, type: EVENTS.AGENT_TURN_COMPLETED, phase: "discussion", session_id: session.id, turn: 1, agent: "codex", content: "Need server API and UI card." },
+    { schema_version: 1, seq: 2, type: EVENTS.FINALIZED, phase: "discussion", session_id: session.id, summary: "Build workplan generation.", next_steps: ["Add API"] },
+    { schema_version: 1, seq: 3, type: EVENTS.SESSION_FINISHED, phase: "finalized", session_id: session.id, finished_at: "2026-06-01T10:01:00+08:00", outcome: "discussion_only", duration_ms: 60000, turn_count: 1, distinct_agents: ["codex"], error_count: 0 },
+  ]) store.appendEvent(session.dir, event);
+
+  const emitted = [];
+  const result = await generateWorkplanForSession({
+    config: MINIMAL_CONFIG,
+    sessionStore: store,
+    sessionDir: session.dir,
+    sessionId: session.id,
+    prompts,
+    runAgent: async () => ({ ok: true, text: JSON.stringify(plan) }),
+    onEvent: (event) => {
+      emitted.push(event);
+      store.appendEvent(session.dir, event);
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.ok(emitted.some((e) => e.type === EVENTS.WORKPLAN_GENERATION_STARTED));
+  assert.ok(emitted.some((e) => e.type === EVENTS.WORKPLAN_CREATED));
+  assert.equal(store.deriveState(session.dir).workplan_status, "created");
+
+  teardownTest();
+  pass();
+}
+
+async function testGenerateWorkplanFailureAllowsRetry() {
+  setupTest("generate workplan failure event");
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("topic");
+  for (const event of [
+    { schema_version: 1, seq: 0, type: EVENTS.SESSION_STARTED, phase: "discussion", session_id: session.id, started_at: "2026-06-01T10:00:00+08:00", topic: "topic", mode: "council", config: {}, capabilities: {}, agents: [] },
+    { schema_version: 1, seq: 1, type: EVENTS.FINALIZED, phase: "discussion", session_id: session.id, summary: "Summary", next_steps: [] },
+    { schema_version: 1, seq: 2, type: EVENTS.SESSION_FINISHED, phase: "finalized", session_id: session.id, finished_at: "2026-06-01T10:01:00+08:00", outcome: "discussion_only", duration_ms: 60000, turn_count: 0, distinct_agents: [], error_count: 0 },
+  ]) store.appendEvent(session.dir, event);
+
+  const emitted = [];
+  const result = await generateWorkplanForSession({
+    config: MINIMAL_CONFIG,
+    sessionStore: store,
+    sessionDir: session.dir,
+    sessionId: session.id,
+    prompts,
+    runAgent: async () => ({ ok: true, text: "{ invalid json" }),
+    onEvent: (event) => {
+      emitted.push(event);
+      store.appendEvent(session.dir, event);
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.ok(emitted.some((e) => e.type === EVENTS.WORKPLAN_GENERATION_FAILED));
+  assert.equal(store.deriveState(session.dir).workplan_status, "failed");
+
+  teardownTest();
+  pass();
+}
+
 async function testWorkplanPromptRendersContract() {
   setupTest("workplan prompt renders contract");
 
@@ -829,6 +907,8 @@ async function main() {
   await testWorkplanJsonParserAndValidator();
   await testWorkplanBriefIncludesAllAgentTurns();
   await testWorkplanPromptRendersContract();
+  await testGenerateWorkplanForDoneSession();
+  await testGenerateWorkplanFailureAllowsRetry();
   await testWorkplanStateAndTranscriptEvents();
   await testHappyPathSingleAgent();
   await testHappyPathTwoAgents();
