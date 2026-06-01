@@ -525,9 +525,22 @@ user
   "agent": "claude",
   "content": "完整回复 Markdown...",
   "content_length": 1234,
-  "duration_ms": 18420
+  "duration_ms": 18420,
+  "signal": {
+    "stance": "mixed",
+    "confidence": "medium",
+    "finalize_readiness": "not_ready",
+    "blockers": [
+      { "type": "question", "text": "失败后是否允许重试？" }
+    ],
+    "agreements": [],
+    "disagreements": [],
+    "recommended_next_step": "继续讨论 blocker"
+  }
 }
 ```
+
+新 session 的 agent turn 应包含 `signal`。旧 session 可能没有该字段，消费者必须兼容缺失。
 
 replay 默认可以一次性展示 `content`。如果 debug 日志包含 `runtime.reply.delta`，未来也可以模拟流式 replay。
 

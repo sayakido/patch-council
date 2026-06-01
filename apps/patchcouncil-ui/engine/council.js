@@ -73,6 +73,121 @@ function parseJsonDecision(raw, fallbackDecision) {
   return null;
 }
 
+const STANCES = new Set(["agree", "disagree", "mixed"]);
+const CONFIDENCES = new Set(["low", "medium", "high"]);
+const READINESS = new Set(["ready", "not_ready"]);
+const BLOCKER_TYPES = new Set(["issue", "question"]);
+
+function normalizeStringArray(value) {
+  return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+}
+
+function fallbackAgentSignal() {
+  return {
+    stance: "mixed",
+    confidence: "low",
+    finalize_readiness: "not_ready",
+    blockers: [{
+      type: "issue",
+      text: "Agent response did not provide a parseable deliberation signal.",
+    }],
+    agreements: [],
+    disagreements: [],
+    recommended_next_step: "Continue discussion with a parseable structured response.",
+  };
+}
+
+function parseAgentTurnSignal(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return { ok: false, error: "empty agent signal response" };
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch (_) {
+    const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    if (fenceMatch) {
+      try { parsed = JSON.parse(fenceMatch[1].trim()); } catch (_) { parsed = null; }
+    }
+    if (!parsed) {
+      const start = text.indexOf("{");
+      const end = text.lastIndexOf("}");
+      if (start !== -1 && end > start) {
+        try { parsed = JSON.parse(text.slice(start, end + 1)); } catch (_) { parsed = null; }
+      }
+    }
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, error: "failed to parse agent turn signal JSON" };
+  }
+
+  if (!STANCES.has(parsed.stance)) return { ok: false, error: "invalid signal.stance" };
+  if (!CONFIDENCES.has(parsed.confidence)) return { ok: false, error: "invalid signal.confidence" };
+  if (!READINESS.has(parsed.finalize_readiness)) return { ok: false, error: "invalid signal.finalize_readiness" };
+  if (typeof parsed.analysis !== "string" || !parsed.analysis.trim()) {
+    return { ok: false, error: "signal.analysis is required" };
+  }
+
+  const blockers = Array.isArray(parsed.blockers) ? parsed.blockers.map((item) => ({
+    type: BLOCKER_TYPES.has(item?.type) ? item.type : "issue",
+    text: typeof item?.text === "string" ? item.text : "",
+  })).filter((item) => item.text.trim()) : [];
+
+  const signal = {
+    stance: parsed.stance,
+    confidence: parsed.confidence,
+    finalize_readiness: parsed.finalize_readiness,
+    blockers,
+    agreements: normalizeStringArray(parsed.agreements),
+    disagreements: normalizeStringArray(parsed.disagreements),
+    recommended_next_step: typeof parsed.recommended_next_step === "string" ? parsed.recommended_next_step : "",
+  };
+
+  return { ok: true, content: parsed.analysis, signal };
+}
+
+function latestSignalsByAgent(eventLog) {
+  const byAgent = new Map();
+  for (const event of eventLog) {
+    if (event.type === events.EVENTS.AGENT_TURN_COMPLETED && event.agent && event.signal) {
+      byAgent.set(event.agent, { agent: event.agent, turn: event.turn, signal: event.signal });
+    }
+  }
+  return [...byAgent.values()];
+}
+
+function firstBlockerText(signal) {
+  const blocker = Array.isArray(signal?.blockers) ? signal.blockers.find((item) => item && item.text) : null;
+  return blocker ? blocker.text : "";
+}
+
+function shouldAllowFinalize(eventLog, options) {
+  const minDistinctAgents = options.minDistinctAgents || 1;
+  const latest = latestSignalsByAgent(eventLog);
+  if (latest.length < minDistinctAgents) {
+    return { allowed: false, reason: `min_distinct_agents=${minDistinctAgents} not satisfied` };
+  }
+
+  for (const item of latest) {
+    const blocker = firstBlockerText(item.signal);
+    if (blocker) return { allowed: false, reason: `blocker remains: ${blocker}` };
+  }
+
+  if (latest.length > 0 && latest.every((item) => item.signal.finalize_readiness === "not_ready")) {
+    return { allowed: false, reason: "all latest signals are finalize_readiness=not_ready" };
+  }
+
+  const notReadyDisagree = latest.find((item) =>
+    item.signal.stance === "disagree" && item.signal.finalize_readiness === "not_ready"
+  );
+  if (notReadyDisagree) {
+    return { allowed: false, reason: `${notReadyDisagree.agent} disagrees and is not ready to finalize` };
+  }
+
+  return { allowed: true, reason: "finalize gate passed" };
+}
+
 function resolveAgentName(agents, requested) {
   const names = Object.keys(agents);
   if (names.length === 0) return null;
@@ -159,6 +274,9 @@ class CouncilEngine extends EventEmitter {
     this.cancelRequested = false;
     this.cancelReason = null;
     this.interjections = [];
+
+    // finalize gate state
+    this.finalizeGateOverrideCount = 0;
   }
 
   emitEvent(type, fields) {
@@ -255,6 +373,9 @@ class CouncilEngine extends EventEmitter {
       const routeResult = await this.routeCoordinator(topic, contextWithSource, agentProfiles, limits);
       decision = routeResult;
 
+      // --- avoid coordinator as first agent ---
+      decision = this.avoidCoordinatorAsFirstAgent(decision, agents);
+
       // --- cancellation checkpoint after route ---
       if (this.cancelRequested) {
         // route returned but we were cancelled; skip all agent turns
@@ -311,6 +432,10 @@ class CouncilEngine extends EventEmitter {
           });
           decision = enforced;
         }
+
+        // --- finalize gate ---
+        decision = this.applyFinalizeGate(decision, agents, minDistinctAgents, maxTurns);
+        if (decision && decision.decision === "finalize") break;
       }
       }
     } catch (err) {
@@ -477,13 +602,27 @@ class CouncilEngine extends EventEmitter {
       return;
     }
 
-    const content = result.text || "";
+    const parsedSignal = parseAgentTurnSignal(result.text || "");
+    let content = result.text || "";
+    let signal = null;
+    let signalParseError = null;
+
+    if (parsedSignal.ok) {
+      content = parsedSignal.content;
+      signal = parsedSignal.signal;
+    } else {
+      signal = fallbackAgentSignal();
+      signalParseError = parsedSignal.error;
+    }
+
     this.emitEvent(events.EVENTS.AGENT_TURN_COMPLETED, {
       turn: turnNum,
       agent: agentName,
       content,
       content_length: content.length,
       duration_ms: durationMs,
+      signal,
+      ...(signalParseError ? { signal_parse_error: signalParseError } : {}),
     });
   }
 
@@ -646,6 +785,85 @@ class CouncilEngine extends EventEmitter {
       reason: `Coordinator requested finalize, but council.min_distinct_agents=${minDistinctAgents} requires at least ${minDistinctAgents} distinct agents to have spoken.`,
     };
   }
+
+  avoidCoordinatorAsFirstAgent(decision, agents) {
+    if (!decision || decision.decision !== "continue") return decision;
+    if (this.turnCount !== 0) return decision;
+    const coordinator = selectCoordinator(this.config);
+    if (!coordinator || decision.next_agent !== coordinator.name) return decision;
+
+    const alternative = Object.keys(agents).find((name) => name !== coordinator.name);
+    if (!alternative) return decision;
+
+    this.emitEvent(events.EVENTS.POLICY_OVERRIDE, {
+      turn: 0,
+      policy: "avoid_coordinator_first_agent",
+      original_decision: "continue",
+      new_decision: "continue",
+      selected_agent: alternative,
+      reason: "enabled agent count > 1; first agent should not be the coordinator",
+    });
+
+    return {
+      decision: "continue",
+      next_agent: alternative,
+      role: decision.role || "Provide the first independent perspective.",
+      reason: "Policy selected a non-coordinator agent for the first turn.",
+    };
+  }
+
+  selectPolicyContinuationAgent(agents) {
+    for (const name of Object.keys(agents)) {
+      if (!this.spokenAgents.has(name)) return name;
+    }
+    const coordinator = selectCoordinator(this.config);
+    for (const name of Object.keys(agents)) {
+      if (name !== coordinator?.name) return name;
+    }
+    return Object.keys(agents)[0] || null;
+  }
+
+  applyFinalizeGate(decision, agents, minDistinctAgents, maxTurns) {
+    if (!decision || decision.decision !== "finalize") return decision;
+    if (this.turnCount >= maxTurns) return decision;
+
+    const gate = shouldAllowFinalize(this.eventLog, { minDistinctAgents });
+    if (gate.allowed) return decision;
+
+    const maxOverrides = this.config.council?.finalize_gate_max_overrides ?? 2;
+    const hasUnspokenAgent = Object.keys(agents).some((name) => !this.spokenAgents.has(name));
+    if (this.finalizeGateOverrideCount >= maxOverrides && !hasUnspokenAgent) {
+      this.emitEvent(events.EVENTS.POLICY_OVERRIDE, {
+        turn: this.turnCount,
+        policy: "finalize_gate_fallback",
+        original_decision: "finalize",
+        new_decision: "finalize",
+        selected_agent: null,
+        reason: `fallback finalize after ${maxOverrides} finalize_gate overrides; unresolved: ${gate.reason}`,
+      });
+      return decision;
+    }
+
+    const nextAgent = this.selectPolicyContinuationAgent(agents);
+    if (!nextAgent) return decision;
+
+    this.finalizeGateOverrideCount++;
+    this.emitEvent(events.EVENTS.POLICY_OVERRIDE, {
+      turn: this.turnCount,
+      policy: "finalize_gate",
+      original_decision: "finalize",
+      new_decision: "continue",
+      selected_agent: nextAgent,
+      reason: gate.reason,
+    });
+
+    return {
+      decision: "continue",
+      next_agent: nextAgent,
+      role: "Respond to unresolved blockers and assess whether the council can finalize.",
+      reason: gate.reason,
+    };
+  }
 }
 
-module.exports = { CouncilEngine, parseJsonDecision, resolveAgentName, clipText, formatAgentProfiles, selectCoordinator, collectContext, availableAgents };
+module.exports = { CouncilEngine, parseJsonDecision, parseAgentTurnSignal, fallbackAgentSignal, latestSignalsByAgent, shouldAllowFinalize, resolveAgentName, clipText, formatAgentProfiles, selectCoordinator, collectContext, availableAgents };

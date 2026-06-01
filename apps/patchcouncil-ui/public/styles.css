@@ -694,3 +694,15 @@ button.primary:hover {
 .muted {
   color: var(--muted);
 }
+
+.signal-meta {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.signal-error {
+  margin-top: 8px;
+  color: #9b2c2c;
+  font-size: 12px;
+}

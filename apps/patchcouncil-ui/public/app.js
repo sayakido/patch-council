@@ -52,7 +52,7 @@ function projectEvent(event) {
     case "user_interjection":
       return { kind: "host", speaker: "Host", text: event.content, agent: null };
     case "agent_turn_completed":
-      return { kind: "agent", speaker: event.agent, text: event.content, agent: event.agent };
+      return { kind: "agent", speaker: event.agent, text: event.content, agent: event.agent, signal: event.signal || null, signalParseError: event.signal_parse_error || "" };
     case "finalized":
       return {
         kind: "summary",
@@ -267,6 +267,19 @@ function renderMessage(msg) {
   var bubble = document.createElement("div");
   bubble.className = "bubble";
   bubble.innerHTML = '<div class="bubble-speaker">' + escapeHtml(msg.speaker) + '</div><div class="bubble-text">' + renderMarkdown(msg.text) + '</div>';
+
+  if (msg.signal) {
+    var meta = document.createElement("div");
+    meta.className = "signal-meta";
+    meta.textContent = [msg.signal.stance, msg.signal.confidence + " confidence", msg.signal.finalize_readiness].filter(Boolean).join(" · ");
+    bubble.append(meta);
+  }
+  if (msg.signalParseError) {
+    var parseError = document.createElement("div");
+    parseError.className = "signal-error";
+    parseError.textContent = "Agent signal parse failed; continuing discussion.";
+    bubble.append(parseError);
+  }
 
   if (msg.kind === "host") {
     wrapper.append(bubble, avatar);

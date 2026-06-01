@@ -47,8 +47,10 @@ class CliRendererSink {
         return `[${event.coordinator}] Done (${event.purpose}, ${event.duration_ms}ms)`;
       case "agent_turn_started":
         return `[${event.agent}] Speaking as "${event.role}"...`;
-      case "agent_turn_completed":
-        return `[${event.agent}] Done (${event.content_length} chars, ${event.duration_ms}ms)`;
+      case "agent_turn_completed": {
+        const signal = event.signal ? `, ${event.signal.stance}/${event.signal.finalize_readiness}` : "";
+        return `[${event.agent}] Done (${event.content_length} chars, ${event.duration_ms}ms${signal})`;
+      }
       case "policy_override":
         return `[policy] Override: ${event.original_decision} -> ${event.new_decision} (${event.reason})`;
       case "finalization_started":

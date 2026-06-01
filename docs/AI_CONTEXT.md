@@ -119,6 +119,7 @@ council:
 - `min_distinct_agents: 2` 用于避免 council 过早退化成单 agent 回答。
 - 如果 coordinator 想提前收束，但已发言的不同 agent 数还没达到要求，并且还没达到 `max_turns`，策略层可以强制选择一个尚未发言的 agent 继续。
 - 策略覆盖应该以 `coordinator (policy)` 形式写入 transcript。
+- 新 session 的 `agent_turn_completed` 会包含 `signal`，其中 `content` 是展示用 analysis。Finalize gate 使用 latest signal per distinct agent 判断是否允许收束。
 
 ## 已知约束
 

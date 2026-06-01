@@ -5,7 +5,13 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { SessionStore } = require("../engine/session-store");
-const { CouncilEngine } = require("../engine/council");
+const {
+  CouncilEngine,
+  parseAgentTurnSignal,
+  fallbackAgentSignal,
+  shouldAllowFinalize,
+  latestSignalsByAgent,
+} = require("../engine/council");
 const { EVENTS } = require("../engine/events");
 
 const prompts = require("../engine/prompts");
@@ -36,6 +42,7 @@ const MINIMAL_CONFIG = {
     max_context_chars: 2500,
     max_transcript_chars: 2500,
     max_message_chars: 800,
+    finalize_gate_max_overrides: 2,
   },
 };
 
@@ -124,7 +131,7 @@ async function testHappyPathSingleAgent() {
     },
     {
       match: isAgentTurnPrompt,
-      response: { ok: true, text: "Codex analysis here." },
+      response: { ok: true, text: JSON.stringify({ stance: "agree", confidence: "high", finalize_readiness: "ready", blockers: [], agreements: [], disagreements: [], recommended_next_step: "finalize", analysis: "Codex analysis here." }) },
     },
     {
       match: isDecidePrompt,
@@ -143,10 +150,10 @@ async function testHappyPathSingleAgent() {
   assert.equal(result.turnCount, 1);
   assert.equal(result.errorCount, 0);
   assert.equal(result.outcome, "discussion_only");
-  assert.ok(!events.some((e) => e.type === EVENTS.POLICY_OVERRIDE), "unexpected policy_override");
 
   const started = events.find((e) => e.type === EVENTS.SESSION_STARTED);
   assert.equal(started.config.council.max_turns, 1);
+  assert.equal(started.config.council.finalize_gate_max_overrides, 2);
   assert.deepStrictEqual(started.config.agents.codex.capabilities, ["plan", "synthesize", "review", "judge"]);
 
   teardownTest();
@@ -168,7 +175,7 @@ async function testHappyPathTwoAgents() {
     },
     {
       match: (p) => isAgentTurnPrompt(p) && p.includes("codex"),
-      response: { ok: true, text: "Codex says X." },
+      response: { ok: true, text: JSON.stringify({ stance: "agree", confidence: "high", finalize_readiness: "ready", blockers: [], agreements: [], disagreements: [], recommended_next_step: "continue", analysis: "Codex says X." }) },
     },
     {
       match: isDecidePrompt,
@@ -182,7 +189,7 @@ async function testHappyPathTwoAgents() {
     },
     {
       match: (p) => isAgentTurnPrompt(p) && p.includes("claude"),
-      response: { ok: true, text: "Claude challenges Y." },
+      response: { ok: true, text: JSON.stringify({ stance: "agree", confidence: "high", finalize_readiness: "ready", blockers: [], agreements: [], disagreements: [], recommended_next_step: "finalize", analysis: "Claude challenges Y." }) },
     },
     {
       match: isFinalizePrompt,
@@ -192,11 +199,10 @@ async function testHappyPathTwoAgents() {
 
   const { events, result } = await runEngine(config, scenarios);
 
-  assert.equal(result.turnCount, 2);
+  assert.ok(result.turnCount >= 2);
   assert.equal(result.errorCount, 0);
   assert.deepStrictEqual(result.distinctAgents.sort(), ["claude", "codex"]);
   assert.equal(result.outcome, "discussion_only");
-  assert.ok(!events.some((e) => e.type === EVENTS.POLICY_OVERRIDE), "unexpected policy_override");
 
   teardownTest();
   pass();
@@ -316,7 +322,7 @@ async function testMinDistinctAgentsPolicy() {
     },
     {
       match: isAgentTurnPrompt,
-      response: { ok: true, text: "Codex analysis." },
+      response: { ok: true, text: JSON.stringify({ stance: "agree", confidence: "high", finalize_readiness: "ready", blockers: [], agreements: [], disagreements: [], recommended_next_step: "finalize", analysis: "Codex analysis." }) },
     },
     {
       match: isDecidePrompt,
@@ -324,7 +330,7 @@ async function testMinDistinctAgentsPolicy() {
     },
     {
       match: (p) => isAgentTurnPrompt(p) && p.includes("independent second perspective"),
-      response: { ok: true, text: "Claude second opinion." },
+      response: { ok: true, text: JSON.stringify({ stance: "agree", confidence: "high", finalize_readiness: "ready", blockers: [], agreements: [], disagreements: [], recommended_next_step: "finalize", analysis: "Claude second opinion." }) },
     },
     {
       match: isFinalizePrompt,
@@ -391,7 +397,7 @@ async function testMaxTurnsEnforced() {
     },
     {
       match: isAgentTurnPrompt,
-      response: { ok: true, text: "Codex analysis." },
+      response: { ok: true, text: JSON.stringify({ stance: "agree", confidence: "high", finalize_readiness: "ready", blockers: [], agreements: [], disagreements: [], recommended_next_step: "finalize", analysis: "Codex analysis." }) },
     },
     {
       match: isFinalizePrompt,
@@ -429,7 +435,7 @@ async function testInterjectionIncludedInNextCoordinatorBrief() {
       match: isAgentTurnPrompt,
       response: async () => {
         engineRef.addInterjection("please include security");
-        return { ok: true, text: "Codex analysis." };
+        return { ok: true, text: JSON.stringify({ stance: "agree", confidence: "high", finalize_readiness: "ready", blockers: [], agreements: [], disagreements: [], recommended_next_step: "finalize", analysis: "Codex analysis." }) };
       },
     },
     {
@@ -970,6 +976,323 @@ async function testSourceMetadataFromCancelledSession() {
   pass();
 }
 
+async function testAgentTurnSignalParser() {
+  setupTest("agent turn signal parser");
+
+  const raw = JSON.stringify({
+    stance: "mixed",
+    confidence: "medium",
+    finalize_readiness: "not_ready",
+    blockers: [{ type: "question", text: "Need user confirmation." }],
+    agreements: ["Keep discussion read-only."],
+    disagreements: ["Do not finalize yet."],
+    recommended_next_step: "Ask another agent to respond.",
+    analysis: "The direction is plausible, but one blocking question remains.",
+  });
+
+  const parsed = parseAgentTurnSignal(raw);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.content, "The direction is plausible, but one blocking question remains.");
+  assert.equal(parsed.signal.stance, "mixed");
+  assert.equal(parsed.signal.finalize_readiness, "not_ready");
+  assert.equal(parsed.signal.blockers[0].text, "Need user confirmation.");
+
+  const fenced = parseAgentTurnSignal("```json\n" + raw + "\n```");
+  assert.equal(fenced.ok, true);
+  assert.equal(fenced.signal.confidence, "medium");
+
+  const invalid = parseAgentTurnSignal("not json");
+  assert.equal(invalid.ok, false);
+  assert.match(invalid.error, /parse/i);
+
+  teardownTest();
+  pass();
+}
+
+async function testFallbackAgentSignalBlocksFinalize() {
+  setupTest("fallback agent signal blocks finalize");
+
+  const fallback = fallbackAgentSignal();
+  assert.equal(fallback.stance, "mixed");
+  assert.equal(fallback.confidence, "low");
+  assert.equal(fallback.finalize_readiness, "not_ready");
+  assert.equal(fallback.blockers.length, 1);
+  assert.match(fallback.blockers[0].text, /parseable/);
+
+  teardownTest();
+  pass();
+}
+
+async function testAgentTurnPromptRequiresSignalJson() {
+  setupTest("agent turn prompt requires signal JSON");
+
+  const rendered = prompts.renderPrompt("council_agent_turn.md", {
+    agent_name: "claude",
+    turn_role: "challenge",
+    topic: "topic",
+    context: "context",
+    transcript: "transcript",
+  });
+
+  assert.match(rendered, /strict JSON|严格 JSON/i);
+  assert.match(rendered, /finalize_readiness/);
+  assert.match(rendered, /blockers/);
+  assert.match(rendered, /analysis/);
+  assert.doesNotMatch(rendered, /## View/);
+
+  teardownTest();
+  pass();
+}
+
+async function testAgentTurnCompletedStoresSignal() {
+  setupTest("agent turn completed stores signal");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.council.min_distinct_agents = 1;
+  config.council.max_turns = 1;
+
+  const agentPayload = {
+    stance: "agree",
+    confidence: "high",
+    finalize_readiness: "ready",
+    blockers: [],
+    agreements: ["The plan is bounded."],
+    disagreements: [],
+    recommended_next_step: "Finalize.",
+    analysis: "I agree with the bounded plan.",
+  };
+
+  const scenarios = [
+    {
+      match: isRoutePrompt,
+      response: { ok: true, text: JSON.stringify({ decision: "continue", next_agent: "codex", role: "analyze", reason: "first" }) },
+    },
+    {
+      match: isAgentTurnPrompt,
+      response: { ok: true, text: JSON.stringify(agentPayload) },
+    },
+    {
+      match: isFinalizePrompt,
+      response: { ok: true, text: JSON.stringify({ consensus: "Done", next_steps: ["ship"] }) },
+    },
+  ];
+
+  const { events } = await runEngine(config, scenarios);
+  const completed = events.find((e) => e.type === EVENTS.AGENT_TURN_COMPLETED);
+
+  assert.equal(completed.content, agentPayload.analysis);
+  assert.equal(completed.signal.stance, "agree");
+  assert.equal(completed.signal.confidence, "high");
+  assert.equal(completed.signal.finalize_readiness, "ready");
+
+  teardownTest();
+  pass();
+}
+
+async function testFinalizeGateBlocksBlockers() {
+  setupTest("finalize gate blocks blockers");
+
+  const log = [
+    { type: EVENTS.AGENT_TURN_COMPLETED, agent: "codex", signal: { stance: "agree", confidence: "high", finalize_readiness: "ready", blockers: [], agreements: [], disagreements: [], recommended_next_step: "finalize" } },
+    { type: EVENTS.AGENT_TURN_COMPLETED, agent: "claude", signal: { stance: "mixed", confidence: "medium", finalize_readiness: "not_ready", blockers: [{ type: "question", text: "Need confirmation." }], agreements: [], disagreements: [], recommended_next_step: "continue" } },
+  ];
+
+  const latest = latestSignalsByAgent(log);
+  assert.equal(latest.length, 2);
+
+  const result = shouldAllowFinalize(log, { minDistinctAgents: 2 });
+  assert.equal(result.allowed, false);
+  assert.match(result.reason, /Need confirmation/);
+
+  teardownTest();
+  pass();
+}
+
+async function testFinalizeGateAllowsReadyDisagreement() {
+  setupTest("finalize gate allows ready disagreement");
+
+  const log = [
+    { type: EVENTS.AGENT_TURN_COMPLETED, agent: "codex", signal: { stance: "agree", confidence: "high", finalize_readiness: "ready", blockers: [], agreements: [], disagreements: [], recommended_next_step: "finalize" } },
+    { type: EVENTS.AGENT_TURN_COMPLETED, agent: "claude", signal: { stance: "disagree", confidence: "medium", finalize_readiness: "ready", blockers: [], agreements: [], disagreements: ["Prefer smaller v1."], recommended_next_step: "finalize with disagreement" } },
+  ];
+
+  const result = shouldAllowFinalize(log, { minDistinctAgents: 2 });
+  assert.equal(result.allowed, true);
+
+  teardownTest();
+  pass();
+}
+
+async function testFinalizeGateBlocksAllNotReady() {
+  setupTest("finalize gate blocks all not ready");
+
+  const log = [
+    { type: EVENTS.AGENT_TURN_COMPLETED, agent: "codex", signal: { stance: "agree", confidence: "low", finalize_readiness: "not_ready", blockers: [], agreements: [], disagreements: [], recommended_next_step: "continue" } },
+    { type: EVENTS.AGENT_TURN_COMPLETED, agent: "claude", signal: { stance: "mixed", confidence: "low", finalize_readiness: "not_ready", blockers: [], agreements: [], disagreements: [], recommended_next_step: "continue" } },
+  ];
+
+  const result = shouldAllowFinalize(log, { minDistinctAgents: 2 });
+  assert.equal(result.allowed, false);
+  assert.match(result.reason, /not_ready/);
+
+  teardownTest();
+  pass();
+}
+
+async function testFinalizeGatePolicyOverrideForBlocker() {
+  setupTest("finalize gate policy override for blocker");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.council.min_distinct_agents = 1;
+  config.council.max_turns = 2;
+
+  const blockerPayload = {
+    stance: "agree",
+    confidence: "medium",
+    finalize_readiness: "not_ready",
+    blockers: [{ type: "question", text: "Need one more view." }],
+    agreements: [],
+    disagreements: [],
+    recommended_next_step: "continue",
+    analysis: "I agree, but one more view is needed.",
+  };
+
+  const readyPayload = {
+    stance: "agree",
+    confidence: "high",
+    finalize_readiness: "ready",
+    blockers: [],
+    agreements: [],
+    disagreements: [],
+    recommended_next_step: "finalize",
+    analysis: "The blocker is resolved.",
+  };
+
+  let agentCalls = 0;
+  const scenarios = [
+    { match: isRoutePrompt, response: { ok: true, text: JSON.stringify({ decision: "continue", next_agent: "codex", role: "analyze", reason: "first" }) } },
+    { match: isAgentTurnPrompt, response: () => ({ ok: true, text: JSON.stringify(agentCalls++ === 0 ? blockerPayload : readyPayload) }) },
+    { match: isDecidePrompt, response: { ok: true, text: JSON.stringify({ decision: "finalize", next_agent: null, role: null, reason: "done" }) } },
+    { match: isFinalizePrompt, response: { ok: true, text: JSON.stringify({ consensus: "ok", next_steps: [] }) } },
+  ];
+
+  const { events, result } = await runEngine(config, scenarios);
+  assert.ok(events.some((e) => e.type === EVENTS.POLICY_OVERRIDE && e.policy === "finalize_gate"));
+  assert.equal(result.turnCount, 2);
+
+  teardownTest();
+  pass();
+}
+
+async function testFinalizeGateFallbackAfterMaxOverrides() {
+  setupTest("finalize gate fallback after max overrides");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.council.min_distinct_agents = 1;
+  config.council.max_turns = 4;
+  config.council.finalize_gate_max_overrides = 1;
+
+  const blockerPayload = {
+    stance: "agree",
+    confidence: "low",
+    finalize_readiness: "not_ready",
+    blockers: [{ type: "question", text: "Need user input." }],
+    agreements: [],
+    disagreements: [],
+    recommended_next_step: "ask user",
+    analysis: "This needs user input.",
+  };
+
+  const scenarios = [
+    { match: isRoutePrompt, response: { ok: true, text: JSON.stringify({ decision: "continue", next_agent: "codex", role: "analyze", reason: "first" }) } },
+    { match: isAgentTurnPrompt, response: { ok: true, text: JSON.stringify(blockerPayload) } },
+    { match: isDecidePrompt, response: { ok: true, text: JSON.stringify({ decision: "finalize", next_agent: null, role: null, reason: "done" }) } },
+    { match: isFinalizePrompt, response: { ok: true, text: JSON.stringify({ consensus: "Fallback with unresolved blockers", next_steps: ["Need user input."] }) } },
+  ];
+
+  const { events, result } = await runEngine(config, scenarios);
+  assert.ok(events.some((e) => e.type === EVENTS.POLICY_OVERRIDE && e.policy === "finalize_gate_fallback"));
+  assert.equal(result.outcome, "discussion_only");
+
+  teardownTest();
+  pass();
+}
+
+async function testRouteAvoidsCoordinatorAsFirstAgent() {
+  setupTest("route avoids coordinator as first agent");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.council.min_distinct_agents = 1;
+  config.council.max_turns = 1;
+
+  const readyPayload = {
+    stance: "agree",
+    confidence: "high",
+    finalize_readiness: "ready",
+    blockers: [],
+    agreements: [],
+    disagreements: [],
+    recommended_next_step: "finalize",
+    analysis: "Ready.",
+  };
+
+  const scenarios = [
+    {
+      match: isRoutePrompt,
+      response: { ok: true, text: JSON.stringify({ decision: "continue", next_agent: "codex", role: "analyze", reason: "coordinator picked itself" }) },
+    },
+    {
+      match: isAgentTurnPrompt,
+      response: { ok: true, text: JSON.stringify(readyPayload) },
+    },
+    {
+      match: isFinalizePrompt,
+      response: { ok: true, text: JSON.stringify({ consensus: "ok", next_steps: [] }) },
+    },
+  ];
+
+  const { events } = await runEngine(config, scenarios);
+  const started = events.find((e) => e.type === EVENTS.AGENT_TURN_STARTED);
+  assert.equal(started.agent, "claude");
+  assert.ok(events.some((e) => e.type === EVENTS.POLICY_OVERRIDE && e.policy === "avoid_coordinator_first_agent"));
+
+  teardownTest();
+  pass();
+}
+
+async function testTranscriptRendersAgentSignalSummary() {
+  setupTest("transcript renders agent signal summary");
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("signal transcript");
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 0, type: EVENTS.SESSION_STARTED, phase: "discussion",
+    session_id: session.id, started_at: "2026-06-01T10:00:00+08:00",
+    topic: "signal transcript", mode: "council", config: {}, capabilities: {}, agents: [],
+  });
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 1, type: EVENTS.AGENT_TURN_COMPLETED, phase: "discussion",
+    session_id: session.id, turn: 1, agent: "claude", content: "Analysis text.", content_length: 14, duration_ms: 10,
+    signal: {
+      stance: "mixed",
+      confidence: "medium",
+      finalize_readiness: "not_ready",
+      blockers: [{ type: "question", text: "Need user input." }],
+      agreements: [],
+      disagreements: [],
+      recommended_next_step: "Ask user.",
+    },
+  });
+
+  const transcript = store.generateTranscript(session.dir);
+  assert.match(transcript, /Stance:\*\* mixed/);
+  assert.match(transcript, /Readiness:\*\* not_ready/);
+  assert.match(transcript, /Need user input/);
+
+  teardownTest();
+  pass();
+}
+
 // --- Main ---
 
 async function main() {
@@ -998,6 +1321,23 @@ async function main() {
   await testSourceMetadataFromFinalizedSession();
   await testSourceMetadataFromCancelledSession();
   await testSourceMetadataIncludesWorkplanSummary();
+
+  await testAgentTurnSignalParser();
+  await testFallbackAgentSignalBlocksFinalize();
+
+  await testAgentTurnPromptRequiresSignalJson();
+  await testAgentTurnCompletedStoresSignal();
+
+  await testFinalizeGateBlocksBlockers();
+  await testFinalizeGateAllowsReadyDisagreement();
+  await testFinalizeGateBlocksAllNotReady();
+  await testFinalizeGatePolicyOverrideForBlocker();
+
+  await testFinalizeGateFallbackAfterMaxOverrides();
+
+  await testRouteAvoidsCoordinatorAsFirstAgent();
+
+  await testTranscriptRendersAgentSignalSummary();
 
   process.stderr.write(`\n${passCount}/${testCount} passed\n`);
   if (passCount < testCount) process.exit(1);

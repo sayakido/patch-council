@@ -43,6 +43,7 @@ const DEFAULT_CONFIG = {
     max_context_chars: 2500,
     max_transcript_chars: 2500,
     max_message_chars: 800,
+    finalize_gate_max_overrides: 2,
   },
   context: {
     max_diff_chars: 40000,
