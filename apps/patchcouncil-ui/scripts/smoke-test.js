@@ -85,6 +85,9 @@ async function main() {
     if (!appJs.includes("Generate Workplan")) {
       throw new Error("app js missing workplan action text");
     }
+    if (!appJs.includes("signal-meta")) {
+      throw new Error("app js missing signal metadata rendering");
+    }
 
     // Config page
     var configHtml = await fetchText("/config.html");
@@ -216,6 +219,12 @@ async function main() {
     }
     if (!doneState || doneState.status !== "done") {
       throw new Error("workplan smoke session did not finish");
+    }
+
+    const planEventsResp = await fetchJson(`/api/sessions/${planEncoded}/events`);
+    const completedTurn = (planEventsResp.events || []).find((e) => e.type === "agent_turn_completed");
+    if (completedTurn && !completedTurn.signal) {
+      throw new Error("expected agent_turn_completed signal");
     }
 
     const startedWorkplan = await fetchJson(`/api/sessions/${planEncoded}/workplan`, {

@@ -195,3 +195,5 @@ council:
 ```
 
 如果 coordinator 试图过早收束，而 session 还没有达到 `max_turns`，策略层可以强制选择另一个尚未发言的 agent 参与。
+
+Agent 发言会携带结构化 signal。Coordinator 可以提议 finalize，但 engine 会通过 finalize gate 检查 latest signal per distinct agent，避免过早收束。

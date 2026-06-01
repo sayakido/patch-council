@@ -78,10 +78,13 @@ function agentTurnStarted(sessionId, seq, phase, turn, agent, role, selectedBy, 
   });
 }
 
-function agentTurnCompleted(sessionId, seq, phase, turn, agent, content, contentLength, durationMs) {
-  return Object.assign(baseEvent(sessionId, seq, EVENTS.AGENT_TURN_COMPLETED, phase), {
+function agentTurnCompleted(sessionId, seq, phase, turn, agent, content, contentLength, durationMs, signal, signalParseError) {
+  const event = Object.assign(baseEvent(sessionId, seq, EVENTS.AGENT_TURN_COMPLETED, phase), {
     turn, agent, content, content_length: contentLength, duration_ms: durationMs,
   });
+  if (signal) event.signal = signal;
+  if (signalParseError) event.signal_parse_error = signalParseError;
+  return event;
 }
 
 function finalizationStarted(sessionId, seq, phase, turnCount) {

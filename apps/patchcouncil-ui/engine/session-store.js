@@ -229,6 +229,20 @@ class SessionStore {
         case "agent_turn_completed":
           lines.push(`## ${event.agent} (turn ${event.turn})`);
           lines.push("");
+          if (event.signal) {
+            lines.push(`**Stance:** ${event.signal.stance || "unknown"}`);
+            lines.push(`**Confidence:** ${event.signal.confidence || "unknown"}`);
+            lines.push(`**Readiness:** ${event.signal.finalize_readiness || "unknown"}`);
+            const firstBlocker = Array.isArray(event.signal.blockers) ? event.signal.blockers.find((item) => item && item.text) : null;
+            if (firstBlocker) {
+              lines.push(`**First blocker:** ${firstBlocker.text}`);
+            }
+            lines.push("");
+          }
+          if (event.signal_parse_error) {
+            lines.push(`**Signal parse error:** ${event.signal_parse_error}`);
+            lines.push("");
+          }
           lines.push(event.content);
           lines.push("");
           break;

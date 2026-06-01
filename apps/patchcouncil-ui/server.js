@@ -114,6 +114,22 @@ function makeRuntimeRunner(projectRoot, activeSession) {
         return { ok: true, text: JSON.stringify({ consensus: "Fake consensus", disagreements: "none", recommended_next_step: "proceed", needs_confirmation: false, next_steps: ["step 1"] }) };
       }
 
+      if (prompt.includes("finalize_readiness") && prompt.includes("blockers") && prompt.includes("analysis")) {
+        return {
+          ok: true,
+          text: JSON.stringify({
+            stance: "agree",
+            confidence: "high",
+            finalize_readiness: "ready",
+            blockers: [],
+            agreements: ["Fake runtime can provide structured agent signal."],
+            disagreements: [],
+            recommended_next_step: "Finalize when policy allows.",
+            analysis: `Fake response from ${agentName}: structured signal generated for smoke tests.`,
+          }),
+        };
+      }
+
       return { ok: true, text: `Fake response from ${agentName}: received prompt (${prompt.length} chars)` };
     }
 
