@@ -663,3 +663,34 @@ button.primary:hover {
     padding: 12px 14px;
   }
 }
+
+/* --- Workplan --- */
+.workplan-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7f8fb;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.workplan-panel h3,
+.workplan-panel h4,
+.workplan-panel p {
+  margin: 0;
+}
+
+.workplan-tasks {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 10px;
+}
+
+.error-text {
+  color: #9b2c2c;
+}
+
+.muted {
+  color: var(--muted);
+}

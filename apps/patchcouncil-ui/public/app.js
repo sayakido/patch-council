@@ -100,6 +100,106 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
+// --- Workplan helpers ---
+function latestEvent(type) {
+  return [...activeEvents].reverse().find(function (event) { return event.type === type; }) || null;
+}
+
+function workplanState() {
+  var created = latestEvent("workplan_created");
+  if (created) return { status: "created", event: created };
+  var failed = latestEvent("workplan_generation_failed");
+  var started = latestEvent("workplan_generation_started");
+  if (started && (!failed || started.seq > failed.seq)) return { status: "generating", event: started };
+  if (failed) return { status: "failed", event: failed };
+  return { status: "none", event: null };
+}
+
+function renderWorkplanCard(session) {
+  var state = workplanState();
+  var section = document.createElement("section");
+  section.className = "workplan-panel";
+
+  var title = document.createElement("h3");
+  title.textContent = "Workplan";
+  section.append(title);
+
+  if (!session || session.status !== "done") {
+    var muted = document.createElement("p");
+    muted.className = "muted";
+    muted.textContent = "Workplan is available after a session finishes successfully.";
+    section.append(muted);
+    return section;
+  }
+
+  if (state.status === "none") {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary";
+    button.textContent = "Generate Workplan";
+    button.addEventListener("click", generateWorkplan);
+    section.append(button);
+    return section;
+  }
+
+  if (state.status === "generating") {
+    var muted2 = document.createElement("p");
+    muted2.className = "muted";
+    muted2.textContent = "Generating workplan...";
+    section.append(muted2);
+    return section;
+  }
+
+  if (state.status === "failed") {
+    var error = document.createElement("p");
+    error.className = "error-text";
+    error.textContent = state.event.message || "Workplan generation failed.";
+    var retryBtn = document.createElement("button");
+    retryBtn.type = "button";
+    retryBtn.className = "secondary";
+    retryBtn.textContent = "Generate Workplan";
+    retryBtn.addEventListener("click", generateWorkplan);
+    section.append(error, retryBtn);
+    return section;
+  }
+
+  var plan = state.event.workplan || {};
+  var heading = document.createElement("h4");
+  heading.textContent = plan.title || "Untitled workplan";
+  var goal = document.createElement("p");
+  goal.textContent = plan.goal || "";
+  section.append(heading, goal);
+
+  var tasks = document.createElement("ol");
+  tasks.className = "workplan-tasks";
+  for (var i = 0; i < (plan.tasks || []).length; i++) {
+    var task = plan.tasks[i];
+    var item = document.createElement("li");
+    var strong = document.createElement("strong");
+    strong.textContent = (task.id || "") + " " + (task.title || "Task").trim();
+    var desc = document.createElement("p");
+    desc.textContent = task.description || "";
+    var verify = document.createElement("p");
+    verify.className = "muted";
+    verify.textContent = "Verify: " + (task.verification || []).join("; ");
+    item.append(strong, desc, verify);
+    tasks.append(item);
+  }
+  section.append(tasks);
+
+  var note = document.createElement("p");
+  note.className = "muted";
+  note.textContent = "Use Continue to discuss revisions in a new session.";
+  section.append(note);
+  return section;
+}
+
+async function generateWorkplan() {
+  if (!activeSessionId) return;
+  await postJson("/api/sessions/" + encodeURIComponent(activeSessionId) + "/workplan", {});
+  await selectSession(activeSessionId);
+}
+
 // --- Markdown rendering ---
 function renderMarkdown(text) {
   if (typeof marked !== "undefined") {
@@ -165,6 +265,10 @@ function renderThread(session, events) {
     // Summary cards on top
     for (var i = 0; i < summaries.length; i++) {
       els.threadBody.append(renderMessage(summaries[i]));
+    }
+
+    if (session && session.status === "done") {
+      els.threadBody.append(renderWorkplanCard(session));
     }
 
     // Collapsible toggle

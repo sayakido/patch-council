@@ -81,6 +81,11 @@ async function main() {
       throw new Error("index html missing workbench composer");
     }
 
+    const appJs = await fetchText("/app.js");
+    if (!appJs.includes("Generate Workplan")) {
+      throw new Error("app js missing workplan action text");
+    }
+
     // Config page
     var configHtml = await fetchText("/config.html");
     if (!configHtml.includes("PatchCouncil Config")) {
