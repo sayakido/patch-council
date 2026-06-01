@@ -13,6 +13,12 @@ const {
   latestSignalsByAgent,
 } = require("../engine/council");
 const { EVENTS } = require("../engine/events");
+const eventBuilders = require("../engine/events");
+const {
+  buildDesignArtifactPath,
+  parseAskOrDraft,
+  summarizeDesignForBrief,
+} = require("../engine/design-council");
 
 const prompts = require("../engine/prompts");
 const { buildWorkplanBrief, parseWorkplanJson, validateWorkplan, generateWorkplanForSession } = require("../engine/workplan");
@@ -93,7 +99,7 @@ function pass() {
   process.stderr.write("ok\n");
 }
 
-async function runEngine(config, scenarios) {
+async function runEngine(config, scenarios, options = {}) {
   const store = new SessionStore(testDir);
   const session = store.createSession("test topic");
   const fakeRuntime = makeFakeRuntime(scenarios);
@@ -106,6 +112,9 @@ async function runEngine(config, scenarios) {
     prompts,
     sessionDir: session.dir,
     sessionId: session.id,
+    mode: options.mode || "council",
+    brainstorming: options.brainstorming,
+    runGit: options.runGit,
   });
 
   const events = [];
@@ -116,6 +125,42 @@ async function runEngine(config, scenarios) {
 }
 
 // --- Test Cases ---
+
+async function testDesignCouncilPureHelpers() {
+  setupTest("design council pure helpers");
+
+  const artifactPath = buildDesignArtifactPath(testDir, "Design Council Workflow!");
+  assert.match(artifactPath, /docs[\\/]designs[\\/]\d{4}-\d{2}-\d{2}-design-council-workflow\.md$/);
+
+  const ask = parseAskOrDraft(JSON.stringify({
+    decision: "ask_user",
+    question: "主要使用者是谁？",
+    reason: "需要确定目标用户。",
+    known_context: ["需要替代 open council"],
+    missing_context: ["目标用户"],
+  }));
+  assert.equal(ask.ok, true);
+  assert.equal(ask.value.decision, "ask_user");
+  assert.equal(ask.value.question, "主要使用者是谁？");
+
+  const draft = parseAskOrDraft("```json\n{\"decision\":\"draft_design\",\"reason\":\"信息足够\",\"known_context\":[],\"missing_context\":[]}\n```");
+  assert.equal(draft.ok, true);
+  assert.equal(draft.value.decision, "draft_design");
+
+  const multiQuestion = parseAskOrDraft("{\"decision\":\"ask_user\",\"question\":\"问题一？问题二？\",\"reason\":\"best effort\",\"known_context\":[],\"missing_context\":[]}");
+  assert.equal(multiQuestion.ok, true);
+
+  const summary = summarizeDesignForBrief("# Title\n\n" + "a".repeat(3000), 120);
+  assert.ok(summary.length <= 160);
+  assert.match(summary, /clipped/i);
+
+  const event = eventBuilders.brainstormingQuestionCreated("s1", 1, "brainstorming", 2, "codex", "主要使用者是谁？", "reason", [], ["目标用户"]);
+  assert.equal(event.type, eventBuilders.EVENTS.BRAINSTORMING_QUESTION_CREATED);
+  assert.equal(event.question_seq, 2);
+
+  teardownTest();
+  pass();
+}
 
 async function testHappyPathSingleAgent() {
   setupTest("happy path single agent");
@@ -1448,6 +1493,7 @@ async function testSignalBlockSurvivesTranscriptBudget() {
 async function main() {
   process.stderr.write("\nCouncil Smoke Tests\n\n");
 
+  await testDesignCouncilPureHelpers();
   await testWorkbenchEventConstants();
   await testWorkplanEventConstants();
   await testWorkbenchStateAndTranscriptEvents();
