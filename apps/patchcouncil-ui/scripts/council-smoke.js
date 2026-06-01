@@ -1639,6 +1639,54 @@ async function testDesignRevisionCommittedAfterReview() {
   pass();
 }
 
+async function testDesignCouncilWorkplanRequiresDesignCommit() {
+  setupTest("design council workplan requires design commit");
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("design without commit");
+  store.appendEvent(session.dir, {
+    schema_version: 1,
+    seq: 0,
+    type: EVENTS.SESSION_STARTED,
+    phase: "brainstorming",
+    session_id: session.id,
+    started_at: new Date().toISOString(),
+    topic: "x",
+    mode: "design_council",
+    config: {},
+  });
+  store.appendEvent(session.dir, {
+    schema_version: 1,
+    seq: 1,
+    type: EVENTS.SESSION_FINISHED,
+    phase: "finalized",
+    session_id: session.id,
+    finished_at: new Date().toISOString(),
+    outcome: "discussion_only",
+    duration_ms: 1,
+    turn_count: 0,
+    distinct_agents: [],
+    error_count: 0,
+  });
+
+  const result = await generateWorkplanForSession({
+    config: MINIMAL_CONFIG,
+    sessionStore: store,
+    sessionDir: session.dir,
+    sessionId: session.id,
+    prompts,
+    runAgent: async () => ({ ok: true, text: "{}" }),
+    onEvent: (event) => store.appendEvent(session.dir, event),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 409);
+  assert.match(result.error, /design commit/i);
+
+  teardownTest();
+  pass();
+}
+
 // --- Main ---
 
 async function main() {
@@ -1650,6 +1698,7 @@ async function main() {
   await testBrainstormingAskUserWaitsForAnswer();
   await testBrainstormingAnswerResumesIntoCouncilReview();
   await testDesignRevisionCommittedAfterReview();
+  await testDesignCouncilWorkplanRequiresDesignCommit();
   await testWorkbenchEventConstants();
   await testWorkplanEventConstants();
   await testWorkbenchStateAndTranscriptEvents();
