@@ -315,6 +315,59 @@ Node runtime adapter spike 已通过 fake 矩阵 + 真实 codex 验证。全栈 
 - 事件类型定义（`events.ts`）成为 engine 和 UI 的共享单源真相
 - `transcript.jsonl` 作为唯一权威日志的设计保持不变
 
+## 2026-06-02：Agent Turn Signal + Finalize Gate
+
+状态：已接受
+
+### 背景
+
+实际测试中出现过 coordinator 过早收束讨论的情况。`min_distinct_agents` 可以避免 council 退化为单 agent 回答，但它只能保证“至少有几个 agent 发言”，不能判断这些 agent 是否真的认为讨论已经成熟。
+
+当 coordinator 和参与讨论的 agent 都可能由同一种 LLM 承担时，单靠 coordinator 判断 `finalize` 会让同一模型既发言又裁判，收束标准偏主观。
+
+### 决策
+
+每个 `agent_turn_completed` 增加结构化 `signal`：
+
+```json
+{
+  "stance": "agree | disagree | mixed",
+  "confidence": "low | medium | high",
+  "finalize_readiness": "ready | not_ready",
+  "blockers": [],
+  "agreements": [],
+  "disagreements": [],
+  "recommended_next_step": "string"
+}
+```
+
+`content` 保存给用户阅读的自然语言 analysis，`signal` 保存策略层使用的结构化判断。
+
+Coordinator 仍然可以提议 `finalize`，但 engine 在接受前执行 finalize gate：
+
+- latest signal per distinct agent 的数量必须满足 `min_distinct_agents`。
+- latest signals 不能包含 blockers。
+- 不能所有 latest signals 都是 `finalize_readiness=not_ready`。
+- `disagree + not_ready` 阻止 finalize。
+- `disagree + ready` 不阻止 finalize，但 final summary 必须能看到并记录 disagreements。
+
+为避免无限讨论，增加：
+
+```yaml
+council:
+  finalize_gate_max_overrides: 2
+```
+
+达到覆盖上限且没有未发言 enabled agent 时，engine 允许 fallback finalize，并把未解决问题写入 `policy_override.reason` 和 finalization brief。
+
+### 影响
+
+- `agent_turn_completed.signal` 成为新 session 的常规字段；旧 session 仍需兼容缺失。
+- `council_agent_turn.md` 从 Markdown 章节输出改为严格 JSON 输出。
+- `policy_override` 新增 `finalize_gate`、`finalize_gate_fallback`、`avoid_coordinator_first_agent` 等策略原因。
+- Finalization brief 必须包含 latest agent signals，避免 ready 状态下的 disagreements 被最终总结遗漏。
+- 后续仍需要单独讨论 Brief/context budget，尤其是 signal block 自身的裁剪和优先级策略。
+
 ## 2026-05-27：Coordinator 决策直接使用 JSON
 
 状态：已接受

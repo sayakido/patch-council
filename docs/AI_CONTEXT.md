@@ -49,7 +49,7 @@ npm run start
 -> coordinator route（选择第一个 agent）
 -> 被选中的 AI agent 发言
 -> coordinator decide，判断继续或收束
--> 策略检查（min_distinct_agents、max_turns）
+-> 策略检查（min_distinct_agents、finalize gate、max_turns）
 -> 可选的下一轮 AI agent 发言
 -> coordinator finalize，输出最终总结
 ```
@@ -114,12 +114,14 @@ council:
   max_context_chars: 2500
   max_transcript_chars: 2500
   max_message_chars: 800
+  finalize_gate_max_overrides: 2
 ```
 
 - `min_distinct_agents: 2` 用于避免 council 过早退化成单 agent 回答。
 - 如果 coordinator 想提前收束，但已发言的不同 agent 数还没达到要求，并且还没达到 `max_turns`，策略层可以强制选择一个尚未发言的 agent 继续。
+- `finalize_gate_max_overrides: 2` 用于避免 finalize gate 在信息不足时无限继续讨论；达到上限且没有未发言 agent 时允许 fallback finalize，并记录未解决问题。
 - 策略覆盖应该以 `coordinator (policy)` 形式写入 transcript。
-- 新 session 的 `agent_turn_completed` 会包含 `signal`，其中 `content` 是展示用 analysis。Finalize gate 使用 latest signal per distinct agent 判断是否允许收束。
+- 新 session 的 `agent_turn_completed` 会包含 `signal`，其中 `content` 是展示用 analysis。Finalize gate 使用 latest signal per distinct agent 判断是否允许收束；`disagree + ready` 可以收束，但 final summary 应记录 disagreements。
 
 ## 已知约束
 
@@ -140,7 +142,7 @@ aictl council --help
 Node 全栈（`apps/patchcouncil-ui/`）：
 ```bash
 npm run check            # 全部 JS 文件语法检查
-npm run smoke            # HTTP smoke + 23 council engine 集成测试
+npm run smoke            # HTTP smoke + 37 council engine 集成测试
 npm run start            # Web UI（http://127.0.0.1:8765），含 chat 工作台 + /config.html
 npm run runtime:fake     # fake runtime 矩阵
 npm run runtime:codex    # 真实 Codex CLI 验证

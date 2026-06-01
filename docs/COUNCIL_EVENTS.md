@@ -477,6 +477,13 @@ abort
 
 `policy_override` 说明策略发生了什么；真正开始的 agent turn 仍由 `agent_turn_started` 表示。
 
+当前会出现的 policy 包括：
+
+- `min_distinct_agents`：coordinator 想 finalize，但不同 agent 发言数不足。
+- `finalize_gate`：coordinator 想 finalize，但 latest agent signals 仍有 blockers、全部 not_ready，或存在 `disagree + not_ready`。
+- `finalize_gate_fallback`：finalize gate 已连续覆盖到 `finalize_gate_max_overrides`，且没有尚未发言的 enabled agent，engine 允许 fallback finalize，并在 reason 中记录未解决问题。
+- `avoid_coordinator_first_agent`：enabled agent 数大于 1 时，首轮避免 coordinator 自己作为第一个发言 agent。
+
 ## agent_turn_started
 
 表示一个 agent 发言开始。
@@ -541,6 +548,17 @@ user
 ```
 
 新 session 的 agent turn 应包含 `signal`。旧 session 可能没有该字段，消费者必须兼容缺失。
+
+`content` 是展示给用户的自然语言 analysis，不再是 agent 输出的完整 JSON。完整结构化判断保存在 `signal` 中：
+
+- `stance`: `agree` / `disagree` / `mixed`
+- `confidence`: `low` / `medium` / `high`
+- `finalize_readiness`: `ready` / `not_ready`
+- `blockers`: 不解决就不应 finalize 的 issue/question
+- `agreements` / `disagreements`: 本轮明确同意或不同意的点
+- `recommended_next_step`: agent 建议的下一步
+
+Finalize gate 使用每个 agent 的最新 signal 判断是否允许收束。`disagree + ready` 不阻止 finalize，但 finalization brief 必须包含 latest signal 摘要，便于 final summary 记录 disagreements。
 
 replay 默认可以一次性展示 `content`。如果 debug 日志包含 `runtime.reply.delta`，未来也可以模拟流式 replay。
 

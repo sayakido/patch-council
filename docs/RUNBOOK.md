@@ -19,7 +19,7 @@ cd apps/patchcouncil-ui
 npm run check
 ```
 
-集成测试（HTTP smoke + 23 council engine 测试）：
+集成测试（HTTP smoke + 37 council engine 测试）：
 
 ```bash
 cd apps/patchcouncil-ui

@@ -41,7 +41,7 @@ Council loop 由 coordinator 驱动：
 -> coordinator route prompt
 -> 被选中的 AI agent 发言
 -> coordinator decision prompt
--> 策略检查（min_distinct_agents、max_turns）
+-> 策略检查（min_distinct_agents、finalize gate、max_turns）
 -> 重复，直到收束或达到最大轮数
 -> coordinator finalization prompt
 ```
@@ -192,8 +192,9 @@ Council loop 在 coordinator 判断之外，还有一个小的策略层。
 ```yaml
 council:
   min_distinct_agents: 2
+  finalize_gate_max_overrides: 2
 ```
 
 如果 coordinator 试图过早收束，而 session 还没有达到 `max_turns`，策略层可以强制选择另一个尚未发言的 agent 参与。
 
-Agent 发言会携带结构化 signal。Coordinator 可以提议 finalize，但 engine 会通过 finalize gate 检查 latest signal per distinct agent，避免过早收束。
+Agent 发言会携带结构化 signal。Coordinator 可以提议 finalize，但 engine 会通过 finalize gate 检查 latest signal per distinct agent，避免过早收束。Finalization brief 会包含最新 signal 摘要，让最终总结能记录 ready 状态下仍存在的 disagreements。
