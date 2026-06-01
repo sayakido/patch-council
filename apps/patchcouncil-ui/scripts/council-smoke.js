@@ -872,6 +872,44 @@ async function testSourceMetadataFromFinalizedSession() {
   pass();
 }
 
+async function testSourceMetadataIncludesWorkplanSummary() {
+  setupTest("source metadata includes workplan summary");
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("planned topic");
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 0, type: EVENTS.SESSION_STARTED, phase: "discussion",
+    session_id: session.id, started_at: "2026-06-01T10:00:00+08:00",
+    topic: "planned topic", mode: "council", config: {}, capabilities: {}, agents: [],
+  });
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 1, type: EVENTS.FINALIZED, phase: "discussion",
+    session_id: session.id, summary: "Final summary", next_steps: [],
+  });
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 2, type: EVENTS.WORKPLAN_CREATED, phase: "finalized",
+    session_id: session.id, created_at: "2026-06-01T10:02:00+08:00",
+    generator: "codex", source: {},
+    workplan: {
+      title: "Workplan title",
+      rationale: "Why",
+      goal: "Goal text",
+      scope: [],
+      non_goals: [],
+      tasks: [{ id: "T1", title: "Task", description: "Do it", files: [], depends_on: [], verification: ["npm run check"] }],
+      risks: [],
+    },
+  });
+
+  const meta = store.getSourceMetadata(session.dir);
+  assert.match(meta.source_summary, /Final summary/);
+  assert.match(meta.source_summary, /Workplan title/);
+  assert.match(meta.source_summary, /Goal text/);
+
+  teardownTest();
+  pass();
+}
+
 async function testSourceMetadataFromCancelledSession() {
   setupTest("source metadata from cancelled session (no finalized)");
 
@@ -922,6 +960,7 @@ async function main() {
   await testCancellationStopsAfterCurrentTurn();
   await testSourceMetadataFromFinalizedSession();
   await testSourceMetadataFromCancelledSession();
+  await testSourceMetadataIncludesWorkplanSummary();
 
   process.stderr.write(`\n${passCount}/${testCount} passed\n`);
   if (passCount < testCount) process.exit(1);

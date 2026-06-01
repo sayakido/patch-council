@@ -152,6 +152,8 @@ class SessionStore {
     const finalizedEvents = allEvents.filter((e) => e.type === "finalized");
     const finalized = finalizedEvents.length > 0 ? finalizedEvents[finalizedEvents.length - 1] : null;
     const agentTurns = allEvents.filter((e) => e.type === "agent_turn_completed");
+    const workplanEvents = allEvents.filter((e) => e.type === "workplan_created");
+    const workplan = workplanEvents.length > 0 ? workplanEvents[workplanEvents.length - 1].workplan : null;
 
     let summary;
     if (finalized && finalized.summary) {
@@ -163,6 +165,15 @@ class SessionStore {
         parts.push(turnEvent.agent + ": " + String(turnEvent.content || "").slice(0, 500));
       }
       summary = parts.join("\n\n");
+    }
+
+    if (workplan) {
+      summary = [
+        summary,
+        "Source workplan: " + (workplan.title || "Untitled workplan"),
+        "Goal: " + (workplan.goal || ""),
+        "Tasks: " + (Array.isArray(workplan.tasks) ? workplan.tasks.map((task) => `${task.id}: ${task.title}`).join("; ") : ""),
+      ].filter(Boolean).join("\n\n");
     }
 
     return {
