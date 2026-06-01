@@ -86,6 +86,12 @@ function buildWorkplanBrief(allEvents, options = {}) {
       sections.push(`## Final Next Steps\n\n${finalized.next_steps.map((step) => `- ${step}`).join("\n")}`);
     }
   }
+  if (started?.source_summary) {
+    sections.push(`## Source Session Summary\n\n${started.source_summary}`);
+    if (started.source_transcript_path) {
+      sections.push(`Source transcript: ${started.source_transcript_path}`);
+    }
+  }
   if (priorWorkplan?.workplan) {
     sections.push(`## Source Workplan\n\n${priorWorkplan.workplan.title || ""}\n\n${priorWorkplan.workplan.goal || ""}`);
   }
@@ -143,90 +149,86 @@ async function generateWorkplanForSession(options) {
   }
 
   let seq = nextSeq(allEvents);
+  const generatedStartedAt = new Date().toISOString();
   onEvent({
     schema_version: 1,
     seq: seq++,
     type: "workplan_generation_started",
     phase: "finalized",
     session_id: sessionId,
-    requested_at: new Date().toISOString(),
+    requested_at: generatedStartedAt,
     generator: generator.name,
   });
 
-  const updatedEvents = sessionStore.readEvents(sessionDir);
-  const started = updatedEvents.find((event) => event.type === "session_started");
-  const brief = buildWorkplanBrief(updatedEvents, {
-    transcriptPath: path.join(sessionDir, "transcript.jsonl"),
-    maxTranscriptChars: config.council?.max_workplan_transcript_chars || 8000,
-    maxMessageChars: config.council?.max_workplan_message_chars || 1200,
-    recentMessageChars: config.council?.max_workplan_recent_message_chars || 2000,
-  });
-  const prompt = prompts.renderPrompt("workplan_create.md", {
-    topic: started?.topic || "",
-    brief,
-  });
+  try {
+    const updatedEvents = sessionStore.readEvents(sessionDir);
+    const started = updatedEvents.find((event) => event.type === "session_started");
+    const brief = buildWorkplanBrief(updatedEvents, {
+      transcriptPath: path.join(sessionDir, "transcript.jsonl"),
+      maxTranscriptChars: config.council?.max_workplan_transcript_chars || 8000,
+      maxMessageChars: config.council?.max_workplan_message_chars || 1200,
+      recentMessageChars: config.council?.max_workplan_recent_message_chars || 2000,
+    });
+    const prompt = prompts.renderPrompt("workplan_create.md", {
+      topic: started?.topic || "",
+      brief,
+    });
 
-  const result = await runAgent(generator.name, generator.config, prompt);
-  if (!result.ok) {
-    const failed = {
+    const result = await runAgent(generator.name, generator.config, prompt);
+    if (!result.ok) {
+      emitFailed(seq, generator.name, result.error || "workplan generation failed");
+      return { ok: false, error: result.error || "workplan generation failed", status: 200 };
+    }
+
+    const parsed = parseWorkplanJson(result.text);
+    const validation = parsed.ok ? validateWorkplan(parsed.workplan) : parsed;
+    if (!parsed.ok || !validation.ok) {
+      emitFailed(seq, generator.name, parsed.ok ? validation.error : parsed.error, String(result.text || "").slice(0, 500));
+      return { ok: false, error: parsed.ok ? validation.error : parsed.error, status: 200 };
+    }
+
+    const finalized = [...updatedEvents].reverse().find((event) => event.type === "finalized");
+    onEvent({
       schema_version: 1,
       seq,
+      type: "workplan_created",
+      phase: "finalized",
+      session_id: sessionId,
+      created_at: new Date().toISOString(),
+      generator: generator.name,
+      source: {
+        summary_event_seq: finalized ? finalized.seq : null,
+        transcript_path: path.join(sessionDir, "transcript.jsonl"),
+      },
+      workplan: parsed.workplan,
+    });
+    sessionStore.deriveState(sessionDir);
+    sessionStore.generateTranscript(sessionDir);
+    return { ok: true, workplan: parsed.workplan, status: 200 };
+  } catch (error) {
+    emitFailed(seq, generator.name, "workplan generation threw: " + error.message, "");
+    return { ok: false, error: error.message, status: 200 };
+  }
+
+  function emitFailed(seqVal, genName, message, raw) {
+    const details = {};
+    if (raw) details.raw = raw;
+    onEvent({
+      schema_version: 1,
+      seq: seqVal,
       type: "workplan_generation_failed",
       phase: "finalized",
       session_id: sessionId,
       failed_at: new Date().toISOString(),
-      generator: generator.name,
-      message: result.error || "workplan generation failed",
+      generator: genName,
+      message,
       recoverable: true,
       action: "show_error",
-      details: {},
-    };
-    onEvent(failed);
+      details,
+    });
     sessionStore.deriveState(sessionDir);
     sessionStore.generateTranscript(sessionDir);
-    return { ok: false, error: failed.message, status: 200 };
   }
-
-  const parsed = parseWorkplanJson(result.text);
-  const validation = parsed.ok ? validateWorkplan(parsed.workplan) : parsed;
-  if (!parsed.ok || !validation.ok) {
-    const failed = {
-      schema_version: 1,
-      seq,
-      type: "workplan_generation_failed",
-      phase: "finalized",
-      session_id: sessionId,
-      failed_at: new Date().toISOString(),
-      generator: generator.name,
-      message: parsed.ok ? validation.error : parsed.error,
-      recoverable: true,
-      action: "show_error",
-      details: { raw: String(result.text || "").slice(0, 500) },
-    };
-    onEvent(failed);
-    sessionStore.deriveState(sessionDir);
-    sessionStore.generateTranscript(sessionDir);
-    return { ok: false, error: failed.message, status: 200 };
-  }
-
-  const finalized = [...updatedEvents].reverse().find((event) => event.type === "finalized");
-  onEvent({
-    schema_version: 1,
-    seq,
-    type: "workplan_created",
-    phase: "finalized",
-    session_id: sessionId,
-    created_at: new Date().toISOString(),
-    generator: generator.name,
-    source: {
-      summary_event_seq: finalized ? finalized.seq : null,
-      transcript_path: path.join(sessionDir, "transcript.jsonl"),
-    },
-    workplan: parsed.workplan,
-  });
-  sessionStore.deriveState(sessionDir);
-  sessionStore.generateTranscript(sessionDir);
-  return { ok: true, workplan: parsed.workplan, status: 200 };
 }
 
 module.exports = {

@@ -737,7 +737,7 @@ async function testWorkplanBriefIncludesAllAgentTurns() {
   setupTest("workplan brief includes all agent turns");
 
   const events = [
-    { type: EVENTS.SESSION_STARTED, seq: 0, topic: "topic", session_id: "s1" },
+    { type: EVENTS.SESSION_STARTED, seq: 0, topic: "topic", session_id: "s1", source_summary: "Prior discussion about architecture.", source_transcript_path: ".project-ai/sessions/s0/transcript.jsonl" },
     { type: EVENTS.AGENT_TURN_COMPLETED, seq: 1, agent: "codex", turn: 1, content: "first file boundary apps/patchcouncil-ui/server.js" },
     { type: EVENTS.AGENT_TURN_COMPLETED, seq: 2, agent: "claude", turn: 2, content: "second risk discussion schema validation" },
     { type: EVENTS.FINALIZED, seq: 3, summary: "summary", next_steps: ["generate plan"] },
@@ -756,6 +756,8 @@ async function testWorkplanBriefIncludesAllAgentTurns() {
   assert.match(brief, /first file boundary/);
   assert.match(brief, /second risk discussion/);
   assert.match(brief, /transcript.jsonl/);
+  assert.match(brief, /Prior discussion about architecture/);
+  assert.match(brief, /Source Session Summary/);
 
   teardownTest();
   pass();
@@ -838,6 +840,40 @@ async function testWorkplanStateAndTranscriptEvents() {
   assert.match(transcript, /Workplan/);
   assert.match(transcript, /Plan title/);
   assert.match(transcript, /npm run check/);
+
+  teardownTest();
+  pass();
+}
+
+async function testGenerateWorkplanExceptionWritesFailed() {
+  setupTest("generate workplan exception writes failed");
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("topic");
+  for (const event of [
+    { schema_version: 1, seq: 0, type: EVENTS.SESSION_STARTED, phase: "discussion", session_id: session.id, started_at: "2026-06-01T10:00:00+08:00", topic: "topic", mode: "council", config: {}, capabilities: {}, agents: [] },
+    { schema_version: 1, seq: 1, type: EVENTS.FINALIZED, phase: "discussion", session_id: session.id, summary: "Summary", next_steps: [] },
+    { schema_version: 1, seq: 2, type: EVENTS.SESSION_FINISHED, phase: "finalized", session_id: session.id, finished_at: "2026-06-01T10:01:00+08:00", outcome: "discussion_only", duration_ms: 60000, turn_count: 0, distinct_agents: [], error_count: 0 },
+  ]) store.appendEvent(session.dir, event);
+
+  const emitted = [];
+  const result = await generateWorkplanForSession({
+    config: MINIMAL_CONFIG,
+    sessionStore: store,
+    sessionDir: session.dir,
+    sessionId: session.id,
+    prompts,
+    runAgent: async () => { throw new Error("simulated crash"); },
+    onEvent: (event) => {
+      emitted.push(event);
+      store.appendEvent(session.dir, event);
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /simulated crash/);
+  assert.ok(emitted.some((e) => e.type === EVENTS.WORKPLAN_GENERATION_FAILED), "missing workplan_generation_failed after exception");
+  assert.equal(store.deriveState(session.dir).workplan_status, "failed");
 
   teardownTest();
   pass();
@@ -947,6 +983,7 @@ async function main() {
   await testWorkplanPromptRendersContract();
   await testGenerateWorkplanForDoneSession();
   await testGenerateWorkplanFailureAllowsRetry();
+  await testGenerateWorkplanExceptionWritesFailed();
   await testWorkplanStateAndTranscriptEvents();
   await testHappyPathSingleAgent();
   await testHappyPathTwoAgents();

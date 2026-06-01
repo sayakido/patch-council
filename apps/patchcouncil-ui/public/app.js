@@ -198,6 +198,43 @@ async function generateWorkplan() {
   if (!activeSessionId) return;
   await postJson("/api/sessions/" + encodeURIComponent(activeSessionId) + "/workplan", {});
   await selectSession(activeSessionId);
+  if (workplanState().status === "generating") {
+    pollForWorkplanResult(activeSessionId);
+  }
+}
+
+function pollForWorkplanResult(sessionId) {
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+  pollInterval = setInterval(function () {
+    if (activeSessionId !== sessionId) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+      return;
+    }
+    (async function () {
+      try {
+        var data = await fetchJson("/api/sessions/" + encodeURIComponent(sessionId) + "/events?since=" + lastPollSeq);
+        var newEvents = Array.isArray(data.events) ? data.events : [];
+        for (var i = 0; i < newEvents.length; i++) {
+          activeEvents.push(newEvents[i]);
+          lastPollSeq = newEvents[i].seq;
+        }
+        var state = workplanState();
+        if (state.status === "created" || state.status === "failed") {
+          clearInterval(pollInterval);
+          pollInterval = null;
+          await loadSessions();
+          renderAll();
+        } else {
+          renderThread(currentSession(), activeEvents);
+          renderRawEvents(activeEvents);
+        }
+      } catch (_) { /* ignore */ }
+    })();
+  }, 2000);
 }
 
 // --- Markdown rendering ---
