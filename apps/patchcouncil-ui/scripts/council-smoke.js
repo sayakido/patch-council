@@ -1388,6 +1388,61 @@ async function testBuildBriefPreservesEarlyAgentSignal() {
   pass();
 }
 
+async function testSignalBlockSurvivesTranscriptBudget() {
+  setupTest("signal block survives tight transcript budget");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.council.min_distinct_agents = 1;
+  config.council.max_turns = 3;
+  // Tight transcript budget — should still not clip signal block.
+  config.council.max_transcript_chars = 200;
+
+  const disagreePayload = {
+    stance: "disagree",
+    confidence: "high",
+    finalize_readiness: "ready",
+    blockers: [],
+    agreements: [],
+    disagreements: ["A1-disagreement-scope", "A2-disagreement-risk", "A3-disagreement-timeline"],
+    recommended_next_step: "Finalize with noted disagreements.",
+    analysis: "Disagree on some points but ready to finalize.",
+  };
+
+  let capturedFinalizePrompt = "";
+
+  const scenarios = [
+    {
+      match: isRoutePrompt,
+      response: { ok: true, text: JSON.stringify({ decision: "continue", next_agent: "claude", role: "analyze", reason: "first" }) },
+    },
+    {
+      match: isAgentTurnPrompt,
+      response: { ok: true, text: JSON.stringify(disagreePayload) },
+    },
+    {
+      match: isDecidePrompt,
+      response: { ok: true, text: JSON.stringify({ decision: "finalize", next_agent: null, role: null, reason: "done" }) },
+    },
+    {
+      match: isFinalizePrompt,
+      response: (prompt) => {
+        capturedFinalizePrompt = prompt;
+        return { ok: true, text: JSON.stringify({ consensus: "Done with disagreements.", next_steps: [] }) };
+      },
+    },
+  ];
+
+  await runEngine(config, scenarios);
+
+  // Signal block must always be present.
+  assert.match(capturedFinalizePrompt, /Latest Agent Signals/);
+  // Even with tight budget, disagreement text must survive.
+  assert.match(capturedFinalizePrompt, /A1-disagreement-scope/);
+
+  teardownTest();
+  pass();
+}
+
 // --- Main ---
 
 async function main() {
@@ -1437,6 +1492,8 @@ async function main() {
   await testFinalizePromptIncludesSignalDisagreements();
 
   await testBuildBriefPreservesEarlyAgentSignal();
+
+  await testSignalBlockSurvivesTranscriptBudget();
 
   process.stderr.write(`\n${passCount}/${testCount} passed\n`);
   if (passCount < testCount) process.exit(1);

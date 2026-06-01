@@ -762,31 +762,32 @@ class CouncilEngine extends EventEmitter {
   }
 
   buildBrief(topic, context, limits, log) {
-    const messages = [];
-
-    // Always include latest signal per distinct agent, independent of event window.
+    // Latest signal block — never clipped, must survive transcript budget.
+    let signalBlock = "";
     const latest = latestSignalsByAgent(log);
     if (latest.length > 0) {
       const entries = latest.map((item) =>
         `- **${item.agent}** (turn ${item.turn}): ${formatSignalForBrief(item.signal)}`
       );
-      messages.push(`### Latest Agent Signals\n\n${entries.join("\n")}`);
+      signalBlock = `### Latest Agent Signals\n\n${entries.join("\n")}`;
     }
 
+    const recentMessages = [];
     const recent = log.slice(-6);
     for (const event of recent) {
       if (event.type === "agent_turn_completed") {
-        messages.push(`### ${event.agent} (turn ${event.turn})\n\n${clipText(event.content, limits.maxMessageChars)}`);
+        recentMessages.push(`### ${event.agent} (turn ${event.turn})\n\n${clipText(event.content, limits.maxMessageChars)}`);
       } else if (event.type === "coordinator_decided") {
-        messages.push(`### Coordinator decided: ${event.decision}\nNext: ${event.next_agent || "none"}\nRole: ${event.role || "none"}\nReason: ${event.reason || ""}`);
+        recentMessages.push(`### Coordinator decided: ${event.decision}\nNext: ${event.next_agent || "none"}\nRole: ${event.role || "none"}\nReason: ${event.reason || ""}`);
       } else if (event.type === "policy_override") {
-        messages.push(`### Policy override: ${event.policy}\n${event.original_decision} → ${event.new_decision}\nReason: ${event.reason}`);
+        recentMessages.push(`### Policy override: ${event.policy}\n${event.original_decision} → ${event.new_decision}\nReason: ${event.reason}`);
       } else if (event.type === "user_interjection") {
-        messages.push(`### Host interjection (turn ${event.turn})\n\n${clipText(event.content, limits.maxMessageChars)}`);
+        recentMessages.push(`### Host interjection (turn ${event.turn})\n\n${clipText(event.content, limits.maxMessageChars)}`);
       }
     }
 
-    const transcript = clipText(messages.join("\n\n"), limits.maxTranscriptChars);
+    const clippedTranscript = clipText(recentMessages.join("\n\n"), limits.maxTranscriptChars);
+    const transcript = signalBlock ? `${signalBlock}\n\n${clippedTranscript}` : clippedTranscript;
 
     return {
       context: clipText(context, limits.maxContextChars),
