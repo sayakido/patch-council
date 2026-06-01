@@ -637,6 +637,24 @@ async function testWorkplanJsonParserAndValidator() {
   pass();
 }
 
+async function testWorkplanPromptRendersContract() {
+  setupTest("workplan prompt renders contract");
+
+  const rendered = prompts.renderPrompt("workplan_create.md", {
+    topic: "topic",
+    brief: "brief",
+  });
+
+  assert.match(rendered, /strict JSON/i);
+  assert.match(rendered, /verification/);
+  assert.match(rendered, /non_goals/);
+  assert.match(rendered, /Do not execute/i);
+  assert.match(rendered, /brief/);
+
+  teardownTest();
+  pass();
+}
+
 async function testWorkplanBriefIncludesAllAgentTurns() {
   setupTest("workplan brief includes all agent turns");
 
@@ -810,6 +828,7 @@ async function main() {
   await testWorkbenchStateAndTranscriptEvents();
   await testWorkplanJsonParserAndValidator();
   await testWorkplanBriefIncludesAllAgentTurns();
+  await testWorkplanPromptRendersContract();
   await testWorkplanStateAndTranscriptEvents();
   await testHappyPathSingleAgent();
   await testHappyPathTwoAgents();
