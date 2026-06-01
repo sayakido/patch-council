@@ -198,9 +198,7 @@ async function generateWorkplan() {
   if (!activeSessionId) return;
   await postJson("/api/sessions/" + encodeURIComponent(activeSessionId) + "/workplan", {});
   await selectSession(activeSessionId);
-  if (workplanState().status === "generating") {
-    pollForWorkplanResult(activeSessionId);
-  }
+  pollForWorkplanResult(activeSessionId);
 }
 
 function pollForWorkplanResult(sessionId) {
