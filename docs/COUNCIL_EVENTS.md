@@ -637,11 +637,12 @@ Workbench 默认把该事件投影为右侧 Host 气泡。
 
 ```text
 discussion_only
-workplan_created
 execution_completed
 error
 cancelled
 ```
+
+Workplan 是 discussion 结束后的派生产物，不修正 `session_finished.outcome`。调用方应通过派生状态里的 `has_workplan` 和 `workplan_status` 判断计划产物状态。
 
 ## 错误事件
 
@@ -738,6 +739,9 @@ session_cancel_requested
 finalization_started
 finalized
 session_finished
+workplan_generation_started
+workplan_created
+workplan_generation_failed
 agent_error
 coordinator_error
 session_error
@@ -776,7 +780,9 @@ aictl session status <id>
   "distinct_agents": ["codex", "claude"],
   "last_seq": 14,
   "outcome": "discussion_only",
-  "error_count": 0
+  "error_count": 0,
+  "has_workplan": true,
+  "workplan_status": "created"
 }
 ```
 
@@ -790,6 +796,15 @@ cancelling
 done
 error
 cancelled
+```
+
+`workplan_status` 建议取值：
+
+```text
+none
+generating
+created
+failed
 ```
 
 ### transcript.md
@@ -816,12 +831,11 @@ cancelled
 
 ## 未来扩展：执行编排
 
-当前第一版只实现只读 council discussion。未来如果支持“AI 讨论后分工执行”，应继续使用同一个 session 事件日志，而不是另建一套日志系统。
+当前已支持只读 council discussion，以及 discussion 后按需生成结构化 workplan。未来如果支持“AI 讨论后分工执行”，应继续使用同一个 session 事件日志，而不是另建一套日志系统。
 
 未来可增加事件：
 
 ```text
-workplan_created
 task_assigned
 task_started
 task_progress
@@ -835,8 +849,8 @@ fix_requested
 建议演进路径：
 
 ```text
-1. 只读 council 可观察化
-2. 讨论后生成结构化 workplan
+1. 只读 council 可观察化（已支持）
+2. 讨论后生成结构化 workplan（已支持）
 3. 用户确认后执行 workplan
 4. 多 agent 分工执行、汇总和 review
 ```

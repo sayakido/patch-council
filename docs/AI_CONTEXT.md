@@ -30,7 +30,8 @@ npm run start
 - Step 1 完成：engine/config.js（YAML 配置加载 + 默认值合并）、engine/prompts.js（`{{ variable }}` 模板替换）、4 个 council prompt 模板已从 Python 复制到 engine/prompts/。
 - Step 1.5 完成：`runCliRuntime` 已支持 `input` / `input_mode`，`codex exec --json ... -` stdin 路径和 Claude `-p ... --output-format stream-json` argument 路径都已真实测通。
 - Step 2+3+4+5 完成：council engine、session store、CLI 入口、Web UI 实时轮询全部交付。
-- Workbench v1 完成并已合并：chat 工作台 UI（三栏布局）、host 控制（interjection / cancel）、session fork/continue（source metadata）、配置页面（`/config.html`）、13 个 council engine 集成测试。
+- Workbench v1 完成并已合并：chat 工作台 UI（三栏布局）、host 控制（interjection / cancel）、session fork/continue（source metadata）、配置页面（`/config.html`）。
+- Workplan v1 已实现：`done` session 可按需生成结构化 workplan，事件追加到 `transcript.jsonl`，状态通过 `has_workplan` / `workplan_status` 派生，不改变 `session_finished.outcome`。
 
 ## Council 模型
 
@@ -138,7 +139,7 @@ aictl council --help
 Node 全栈（`apps/patchcouncil-ui/`）：
 ```bash
 npm run check            # 全部 JS 文件语法检查
-npm run smoke            # HTTP smoke + 13 council engine 集成测试
+npm run smoke            # HTTP smoke + 23 council engine 集成测试
 npm run start            # Web UI（http://127.0.0.1:8765），含 chat 工作台 + /config.html
 npm run runtime:fake     # fake runtime 矩阵
 npm run runtime:codex    # 真实 Codex CLI 验证
@@ -148,4 +149,4 @@ node cli/cli.js council "话题"   # 真实 council 讨论
 
 ## 下一步优先级
 
-见 `docs/ROADMAP.md`。Workbench v1 已交付并合并，下一步进入"以后"阶段（workplan 生成、自然语言入口、分工执行）。
+见 `docs/ROADMAP.md`。Workbench v1 和 Workplan v1 已交付并合并，下一步进入自然语言入口和分工执行方向。

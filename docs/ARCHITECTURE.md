@@ -109,7 +109,7 @@ AI CLI raw output
    -> session 结束后从 jsonl 生成 transcript.md
 ```
 
-Web 工作台将 council event 投影为 chat 消息：agent_turn_completed → agent 气泡，coordinator_decided → 系统行，user_interjection → host 气泡，finalized → 摘要卡片。
+Web 工作台将 council event 投影为 chat 消息：agent_turn_completed → agent 气泡，coordinator_decided → 系统行，user_interjection → host 气泡，finalized → 摘要卡片。Workplan events 是 discussion 完成后的派生产物，投影为 Workplan 卡片或生成状态，不改变 `session_finished.outcome`。
 
 `runtime.reply.delta` 可用于实时流式渲染，但默认不写入 `transcript.jsonl`。`agent_turn_completed` 是 council 层完整发言事件，应写入完整回复内容，保证事件日志可以完整重建 session。
 

@@ -26,14 +26,15 @@ Workbench v1 状态：
 - ~~Step 5: UI Real-Time~~ ✓ 完成
 - ~~Step 6: Workbench v1 (chat UI + config page + host controls + session fork)~~ ✓ 完成
 - ~~Step 7: 文档收尾~~ ✓ 完成
+- ~~Workplan v1: 讨论后生成结构化 workplan，暂不自动执行~~ ✓ 完成
 
 Workbench v1 已合并到 master。以下为后续方向。
 
 ## 以后
 
 1. （已完成：JSON 解析失败、未知 agent、最大轮数兜底已在 engine 中实现）
-2. （已完成：13 个 council engine 集成测试覆盖关键场景）
-3. （当前实现中）讨论后生成结构化 workplan，但暂不自动执行。
+2. （已完成：23 个 council engine 集成测试覆盖关键场景）
+3. （已完成）讨论后生成结构化 workplan，但暂不自动执行。
 4. 在 Workbench 中增加自然语言入口：
 
 ```text
