@@ -324,6 +324,12 @@ button:hover {
   margin-bottom: 6px;
 }
 
+.bubble-meta {
+  font-size: 11px;
+  color: #999;
+  margin-bottom: 4px;
+}
+
 .bubble-text {
   margin: 0;
   overflow-wrap: anywhere;
