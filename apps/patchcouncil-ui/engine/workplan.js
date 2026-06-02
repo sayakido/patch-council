@@ -377,10 +377,14 @@ async function generateWorkplanForSession(options) {
 
   try {
     artifact.ensureWorkplanDirectory(artifactPath);
-    // Allow retry after failed/rejected — clean up the previous artifact file.
+    // Allow retry after failed/rejected — clean up the previous artifact file,
+    // but only if this session's workplan events confirm ownership.
     if (fs.existsSync(artifactPath)) {
       const state = sessionStore.deriveState(sessionDir);
-      if (state.workplan && (state.workplan.status === "failed" || state.workplan.status === "rejected")) {
+      const sessionOwnsArtifact = allEvents.some(
+        (e) => e.type && e.type.startsWith("workplan_") && (e.artifact_path === artifactPath || (e.details && e.details.artifact_path === artifactPath))
+      );
+      if (sessionOwnsArtifact && state.workplan && (state.workplan.status === "failed" || state.workplan.status === "rejected")) {
         fs.unlinkSync(artifactPath);
       }
     }

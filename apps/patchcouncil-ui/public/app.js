@@ -134,9 +134,9 @@ function workplanState() {
     "workplan_created",
   ];
   var latest = null;
-  for (var i = 0; i < _events.length; i++) {
-    if (WORKPLAN_EVENT_TYPES.indexOf(_events[i].type) !== -1) {
-      if (!latest || _events[i].seq > latest.seq) latest = _events[i];
+  for (var i = 0; i < activeEvents.length; i++) {
+    if (WORKPLAN_EVENT_TYPES.indexOf(activeEvents[i].type) !== -1) {
+      if (!latest || activeEvents[i].seq > latest.seq) latest = activeEvents[i];
     }
   }
   if (!latest) return { status: "none", event: null };
