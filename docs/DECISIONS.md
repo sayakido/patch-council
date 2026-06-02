@@ -2,6 +2,54 @@
 
 这个文件记录已经相对稳定的项目决策和背后的理由。
 
+## 2026-06-02：Design Council 作为澄清和设计评审入口
+
+状态：已接受
+
+### 背景
+
+开放式 council loop 适合多 agent 讨论和挑战，但当用户的 topic 还不够清晰时，多个 agent 会在缺少上下文的情况下发散。Agent Turn Signal 和 finalize gate 可以降低过早收束风险，但不能替代面向用户的一问一答澄清。
+
+同时，真实产品演进需要的不只是最终总结，而是一份可以 review、diff、修订并继续生成 workplan 的设计文档。把完整设计反复塞进 brief 也会加重上下文预算压力。
+
+### 决策
+
+新增 `mode=design_council`：
+
+```text
+用户 topic
+-> brainstorming prelude（单 lead agent，一次只问一个问题）
+-> 写入 docs/designs/YYYY-MM-DD-<slug>.md
+-> git commit 第一版 design
+-> phase_transition brainstorming -> discussion
+-> 复用现有 council loop review / challenge / constructive improve design
+-> lead agent 根据 blocker 或 revise 建议修订 design 并提交 revision commit
+-> finalized
+-> workplan 基于 latest design commit
+```
+
+`skill.yaml` 中的 `lead_agent` 只是默认值，最终 agent 必须从全局 agent config 解析，并在 session 创建阶段完成可用性校验。
+
+Design artifact 的文件落盘和 git commit 成功分开记录：
+
+```text
+design_file_written
+design_commit_created
+design_commit_failed
+design_revision_written
+design_revision_committed
+```
+
+commit 必须限定到 design artifact，避免把用户已 staged 的无关文件带入设计提交。
+
+### 影响
+
+- 普通 `mode=council` 继续保持只读开放讨论。
+- `mode=design_council` 会写入 `docs/designs/...md` 并生成 git commit，作为 reviewer 和后续 workplan 的上下文锚点。
+- `state.json` 新增 `mode`、`waiting_for`、`brainstorming` 和 `design` 投影，Workbench 可以显示等待用户回答、design artifact 和 commit hash。
+- 没有 design commit 的 `design_council` session 不允许生成 workplan。
+- Council brief 默认携带 design path、commit hash 和摘要；完整上下文可通过文件路径或 commit 回溯。
+
 ## 2026-05-28：Workbench 成为主入口，Python 原型退场
 
 状态：已接受

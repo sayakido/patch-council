@@ -150,7 +150,7 @@ aictl council --help
 Node 全栈（`apps/patchcouncil-ui/`）：
 ```bash
 npm run check            # 全部 JS 文件语法检查
-npm run smoke            # HTTP smoke + 37 council engine 集成测试
+npm run smoke            # HTTP smoke + 46 council engine 集成测试
 npm run start            # Web UI（http://127.0.0.1:8765），含 chat 工作台 + /config.html
 npm run runtime:fake     # fake runtime 矩阵
 npm run runtime:codex    # 真实 Codex CLI 验证

@@ -28,22 +28,24 @@ Workbench v1 状态：
 - ~~Step 7: 文档收尾~~ ✓ 完成
 - ~~Workplan v1: 讨论后生成结构化 workplan，暂不自动执行~~ ✓ 完成
 - ~~Agent Turn Signal v1: agent 发言结构化 signal + finalize gate~~ ✓ 完成
+- ~~Design Council Workflow v1: brainstorming prelude + git-backed design review~~ ✓ 完成
 
 Workbench v1 已合并到 master。以下为后续方向。
 
 ## 以后
 
 1. （已完成：JSON 解析失败、未知 agent、最大轮数兜底已在 engine 中实现）
-2. （已完成：37 个 council engine 集成测试覆盖关键场景）
+2. （已完成：46 个 council engine 集成测试覆盖关键场景）
 3. （已完成）讨论后生成结构化 workplan，但暂不自动执行。
-4. 在 Workbench 中增加自然语言入口：
+4. （已完成）design council 默认先澄清用户意图，提交 design draft，再进入 council review。
+5. 在 Workbench 中增加自然语言入口：
 
 ```text
 用户在 Web Workbench 输入自然语言请求
 -> 系统判断应该回答、讨论、计划、审查、实现还是追问
 ```
 
-5. 将自然语言请求路由到合适模式：
+6. 将自然语言请求路由到合适模式：
 
 ```text
 回答
@@ -53,9 +55,9 @@ Workbench v1 已合并到 master。以下为后续方向。
 追问用户
 ```
 
-6. 当自然语言请求涉及修改文件时，要求用户有明确意图或进行二次确认。
+7. 当自然语言请求涉及修改文件时，要求用户有明确意图或进行二次确认。
 
-7. 支持讨论后分工执行：
+8. 支持讨论后分工执行：
 
 ```text
 discussion

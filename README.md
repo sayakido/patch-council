@@ -1,6 +1,6 @@
 # PatchCouncil
 
-一个本地多 AI 协作编排器。通过 council 模式让多个 AI CLI（Codex、Claude）进行动态讨论、挑战和收束，产出结构化结论。
+一个本地多 AI 协作编排器。通过 council / design council 模式让多个 AI CLI（Codex、Claude）进行澄清、动态讨论、挑战和收束，产出可追溯的设计文档、结构化结论和 workplan。
 
 ## 核心概念
 
@@ -8,15 +8,18 @@
 
 ```text
 用户主题
+→ [design_council] brainstorming prelude（一问一答澄清）
+→ [design_council] 写入 docs/designs/...md 并生成 git commit
 → coordinator 路由（选择第一个 agent）
 → agent 发言
 → coordinator 判断继续/收束
-→ 策略检查（min_distinct_agents、max_turns）
+→ 策略检查（min_distinct_agents、finalize gate、max_turns）
 → 循环，直到收束
 → coordinator 最终总结
+→ 可按需生成结构化 workplan
 ```
 
-当前 council 只读，不修改文件。讨论过程以结构化事件流写入 session 日志。
+普通 `mode=council` 只读，不修改文件。`mode=design_council` 会在 brainstorming 后写入 `docs/designs/...md`，并只提交该 design artifact 作为 review 上下文锚点。讨论过程以结构化事件流写入 session 日志。
 
 ## 项目结构
 
@@ -59,7 +62,7 @@ npm run start
 # → 打开 http://127.0.0.1:8765
 ```
 
-Web UI 支持创建、观察、打断、取消和继续 council 会话。配置页面位于 `/config.html`。
+Web UI 支持创建、观察、打断、取消和继续 council 会话。design council 会话在需要用户补充信息时进入 `waiting_for_user`，用户可直接在 composer 中回答 brainstorming 问题。配置页面位于 `/config.html`。
 
 Node CLI 保留作为开发/调试入口，不在用户主路径上：
 
@@ -67,7 +70,7 @@ Node CLI 保留作为开发/调试入口，不在用户主路径上：
 # 语法检查
 npm run check
 
-# 集成测试（HTTP smoke + 13 council engine 测试）
+# 集成测试（HTTP smoke + council engine smoke）
 npm run smoke
 
 # 运行 council 讨论（需要 Codex + Claude CLI 已安装和登录）
