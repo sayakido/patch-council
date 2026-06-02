@@ -1,0 +1,15 @@
+id: workplan_council
+title: Workplan Council
+version: 1
+
+source_artifact: design
+artifact: workplan
+artifact_dir: docs/workplans
+author_agent: codex
+reviewer_policy: council_loop
+
+required_contract:
+  format: markdown
+  style: writing-plans
+  requires_user_approval: true
+  execution_allowed: false

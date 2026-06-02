@@ -693,6 +693,16 @@ button.primary:hover {
   gap: 10px;
 }
 
+.workplan-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.workplan-panel .error-text {
+  color: #9b2c2c;
+}
+
 .error-text {
   color: #9b2c2c;
 }

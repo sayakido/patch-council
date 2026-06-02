@@ -90,8 +90,15 @@ class SessionStore {
     const waitingForBrainstorming =
       latestQuestion && (!latestAnswer || latestAnswer.question_seq < latestQuestion.question_seq);
 
+    const latestApprovalRequest = [...allEvents].reverse().find((e) => e.type === "workplan_approval_requested");
+    const latestApprovalDecision = [...allEvents].reverse().find((e) =>
+      e.type === "workplan_approved" || e.type === "workplan_approval_rejected"
+    );
+    const waitingForWorkplanApproval =
+      latestApprovalRequest && (!latestApprovalDecision || latestApprovalDecision.seq < latestApprovalRequest.seq);
+
     let status = "running";
-    if (waitingForBrainstorming) {
+    if (waitingForBrainstorming || waitingForWorkplanApproval) {
       status = "waiting_for_user";
     } else if (sessionFinished) {
       const outcome = sessionFinished.outcome;
@@ -133,6 +140,50 @@ class SessionStore {
       }
     }
 
+    const latestWorkplanFile = [...allEvents].reverse().find((e) =>
+      e.type === "workplan_revision_written" ||
+      e.type === "workplan_draft_written" ||
+      e.type === "workplan_revision_committed" ||
+      e.type === "workplan_draft_committed" ||
+      e.type === "workplan_author_response_started" ||
+      e.type === "workplan_author_response_completed" ||
+      e.type === "workplan_approval_requested" ||
+      e.type === "workplan_approved" ||
+      e.type === "workplan_approval_rejected"
+    );
+    const draftWorkplanCommit = allEvents.find((e) => e.type === "workplan_draft_committed");
+    const latestWorkplanCommit = [...allEvents].reverse().find((e) =>
+      e.type === "workplan_revision_committed" || e.type === "workplan_draft_committed"
+    );
+    const latestWorkplanTitle = [...allEvents].reverse().find((e) =>
+      e.type === "workplan_draft_written" || e.type === "workplan_revision_written"
+    );
+    const approvedWorkplan = [...allEvents].reverse().find((e) => e.type === "workplan_approved");
+    const latestWorkplanArtifactEvent = [...allEvents].reverse().find((e) => String(e.type || "").startsWith("workplan_"));
+
+    let artifactWorkplanStatus = "none";
+    if (latestWorkplanArtifactEvent) {
+      const statusByType = {
+        workplan_draft_started: "drafting",
+        workplan_draft_written: "draft_written",
+        workplan_draft_committed: "draft_committed",
+        workplan_review_started: "reviewing",
+        workplan_review_completed: "reviewed",
+        workplan_author_response_started: "author_responding",
+        workplan_author_response_completed: "author_responded",
+        workplan_revision_written: "revision_written",
+        workplan_revision_committed: "revision_committed",
+        workplan_draft_commit_failed: "draft_commit_failed",
+        workplan_revision_commit_failed: "revision_commit_failed",
+        workplan_approval_requested: "awaiting_approval",
+        workplan_approved: "approved",
+        workplan_approval_rejected: "rejected",
+        workplan_generation_failed: "failed",
+        workplan_created: "legacy_json_created",
+      };
+      artifactWorkplanStatus = statusByType[latestWorkplanArtifactEvent.type] || "none";
+    }
+
     const designFile = [...allEvents].reverse().find((e) => e.type === "design_file_written" || e.type === "design_revision_written");
     const draftCommit = allEvents.find((e) => e.type === "design_commit_created");
     const latestCommitEvent = [...allEvents].reverse().find((e) => e.type === "design_revision_committed" || e.type === "design_commit_created");
@@ -162,10 +213,20 @@ class SessionStore {
       error_count: errorCount,
       has_workplan: hasWorkplan,
       workplan_status: workplanStatus,
-      waiting_for: waitingForBrainstorming ? "brainstorming_answer" : null,
+      waiting_for: waitingForBrainstorming ? "brainstorming_answer" : waitingForWorkplanApproval ? "workplan_approval" : null,
       brainstorming: {
         question_count: allEvents.filter((e) => e.type === "brainstorming_question_created").length,
         lead_agent: allEvents.find((e) => e.type === "brainstorming_started")?.lead_agent || null,
+      },
+      workplan: {
+        artifact_path: latestWorkplanFile?.artifact_path || null,
+        source_design_commit: latestWorkplanFile?.source_design_commit || null,
+        draft_commit: draftWorkplanCommit?.commit || null,
+        latest_commit: latestWorkplanCommit?.commit || null,
+        approved_commit: approvedWorkplan?.approved_commit || null,
+        status: artifactWorkplanStatus,
+        title: latestWorkplanTitle?.title || null,
+        revision: latestWorkplanTitle?.revision ?? null,
       },
       design: {
         artifact_path: designFile?.artifact_path || null,
@@ -448,6 +509,91 @@ class SessionStore {
           lines.push(`**Path:** ${event.artifact_path}`);
           lines.push(`**Commit:** ${event.commit}`);
           lines.push(`**Message:** ${event.commit_message}`);
+          lines.push("");
+          break;
+
+        case "workplan_draft_written":
+          lines.push("## Workplan draft written");
+          lines.push("");
+          lines.push(`**Path:** ${event.artifact_path}`);
+          lines.push(`**Title:** ${event.title}`);
+          lines.push(`**Source design commit:** ${event.source_design_commit}`);
+          lines.push("");
+          break;
+
+        case "workplan_draft_committed":
+          lines.push("## Workplan draft committed");
+          lines.push("");
+          lines.push(`**Path:** ${event.artifact_path}`);
+          lines.push(`**Commit:** ${event.commit}`);
+          lines.push(`**Message:** ${event.commit_message}`);
+          lines.push("");
+          break;
+
+        case "workplan_review_completed":
+          lines.push("## Workplan review completed");
+          lines.push("");
+          lines.push(`**Path:** ${event.artifact_path}`);
+          lines.push(`**Commit:** ${event.workplan_commit}`);
+          lines.push(`**Reviewer:** ${event.reviewer}`);
+          lines.push(`**Requires revision:** ${event.requires_revision ? "yes" : "no"}`);
+          lines.push("");
+          break;
+
+        case "workplan_author_response_completed":
+          lines.push("## Workplan author response completed");
+          lines.push("");
+          lines.push(`**Path:** ${event.artifact_path}`);
+          lines.push(`**Commit:** ${event.workplan_commit}`);
+          lines.push(`**Author:** ${event.author}`);
+          lines.push(`**Decision:** ${event.decision}`);
+          lines.push(`**Revision required:** ${event.revision_required ? "yes" : "no"}`);
+          lines.push("");
+          break;
+
+        case "workplan_revision_committed":
+          lines.push("## Workplan revision committed");
+          lines.push("");
+          lines.push(`**Path:** ${event.artifact_path}`);
+          lines.push(`**Commit:** ${event.commit}`);
+          lines.push(`**Message:** ${event.commit_message}`);
+          lines.push("");
+          break;
+
+        case "workplan_approval_requested":
+          lines.push("## Workplan approval requested");
+          lines.push("");
+          lines.push(`**Path:** ${event.artifact_path}`);
+          lines.push(`**Commit:** ${event.workplan_commit}`);
+          lines.push(`**Requested:** ${event.requested_at}`);
+          lines.push("");
+          break;
+
+        case "workplan_approved":
+          lines.push("## Workplan approved");
+          lines.push("");
+          lines.push(`**Path:** ${event.artifact_path}`);
+          lines.push(`**Approved commit:** ${event.approved_commit}`);
+          lines.push(`**Approved at:** ${event.approved_at}`);
+          lines.push("");
+          break;
+
+        case "workplan_approval_rejected":
+          lines.push("## Workplan rejected");
+          lines.push("");
+          lines.push(`**Path:** ${event.artifact_path}`);
+          lines.push(`**Commit:** ${event.workplan_commit}`);
+          lines.push(`**Reason:** ${event.reason}`);
+          lines.push("");
+          break;
+
+        case "workplan_draft_commit_failed":
+        case "workplan_revision_commit_failed":
+          lines.push("## Workplan commit failed");
+          lines.push("");
+          lines.push(`**Path:** ${event.artifact_path}`);
+          lines.push(`**Stage:** ${event.stage}`);
+          lines.push(`**Error:** ${event.error}`);
           lines.push("");
           break;
 

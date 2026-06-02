@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { findProjectRoot } = require("../engine/config");
+const { slugifyDesignTopic } = require("../engine/design-council");
 
 const port = 9876;
 const env = {
@@ -82,8 +83,23 @@ async function main() {
     }
 
     const appJs = await fetchText("/app.js");
-    if (!appJs.includes("Generate Workplan")) {
-      throw new Error("app js missing workplan action text");
+    if (!appJs.includes("Approve Workplan")) {
+      throw new Error("app js missing workplan approval action");
+    }
+    if (!appJs.includes("workplan_approval_requested")) {
+      throw new Error("app js missing workplan artifact projection");
+    }
+    if (!appJs.includes("Responding to workplan review")) {
+      throw new Error("app js missing workplan author response state");
+    }
+    if (!appJs.includes("Workplan approved")) {
+      throw new Error("app js missing approved workplan state");
+    }
+    if (!appJs.includes("Workplan rejected")) {
+      throw new Error("app js missing rejected workplan state");
+    }
+    if (!appJs.includes("Workplan generation failed")) {
+      throw new Error("app js missing failed workplan state");
     }
     if (!appJs.includes("signal-meta")) {
       throw new Error("app js missing signal metadata rendering");
@@ -201,30 +217,43 @@ async function main() {
       throw new Error("continued session_started missing source_session_id");
     }
 
-    // Workplan generation
+    // Workplan Council generation
     const planSession = await fetchJson("/api/sessions", {
       method: "POST",
-      body: JSON.stringify({ topic: "workplan smoke topic", mode: "council" }),
+      body: JSON.stringify({
+        topic: "workplan council smoke topic",
+        mode: "design_council",
+        brainstorming: { lead_agent: "codex", max_questions: 1 },
+      }),
     });
     const planSessionId = planSession.session_id;
     const planEncoded = encodeURIComponent(planSessionId);
 
-    const doneDeadline = Date.now() + 8000;
-    let doneState = null;
-    while (Date.now() < doneDeadline) {
+    // Clean up any prior workplan artifact so assertWorkplanWritable passes
+    const today = new Date().toISOString().slice(0, 10);
+    const workplanSlug = slugifyDesignTopic("workplan council smoke topic");
+    const expectedWorkplanPath = path.join(projectRoot, "docs", "workplans", `${today}-${workplanSlug}.md`);
+    const expectedDesignPath = path.join(projectRoot, "docs", "designs", `${today}-${workplanSlug}.md`);
+    let savedWorkplan = null;
+    try { savedWorkplan = fs.readFileSync(expectedWorkplanPath); } catch {}
+    if (savedWorkplan !== null) fs.unlinkSync(expectedWorkplanPath);
+
+    const designDeadline = Date.now() + 10000;
+    let designState = null;
+    while (Date.now() < designDeadline) {
       const all = await fetchJson("/api/sessions");
-      doneState = all.sessions.find((item) => item.session_id === planSessionId);
-      if (doneState && doneState.status === "done") break;
+      designState = all.sessions.find((item) => item.session_id === planSessionId);
+      if (designState && designState.status === "done" && designState.design && designState.design.latest_commit) break;
+      if (designState && designState.status === "waiting_for_user" && designState.waiting_for === "brainstorming_answer") {
+        await fetchJson(`/api/sessions/${planEncoded}/brainstorming/answer`, {
+          method: "POST",
+          body: JSON.stringify({ content: "主要使用者是本地 Workbench 用户，第一版只生成 workplan，不执行代码。" }),
+        });
+      }
       await wait(200);
     }
-    if (!doneState || doneState.status !== "done") {
-      throw new Error("workplan smoke session did not finish");
-    }
-
-    const planEventsResp = await fetchJson(`/api/sessions/${planEncoded}/events`);
-    const completedTurn = (planEventsResp.events || []).find((e) => e.type === "agent_turn_completed");
-    if (completedTurn && !completedTurn.signal) {
-      throw new Error("expected agent_turn_completed signal");
+    if (!designState || designState.status !== "done" || !designState.design || !designState.design.latest_commit) {
+      throw new Error("design council smoke session did not produce a design commit");
     }
 
     const startedWorkplan = await fetchJson(`/api/sessions/${planEncoded}/workplan`, {
@@ -235,17 +264,26 @@ async function main() {
       throw new Error("expected workplan generation status");
     }
 
-    const workplanDeadline = Date.now() + 5000;
+    const workplanDeadline = Date.now() + 8000;
     let workplanEvents = [];
     while (Date.now() < workplanDeadline) {
       const resp = await fetchJson(`/api/sessions/${planEncoded}/events`);
       workplanEvents = resp.events || [];
-      if (workplanEvents.some((event) => event.type === "workplan_created")) break;
+      if (workplanEvents.some((event) => event.type === "workplan_approval_requested")) break;
       await wait(200);
     }
-    if (!workplanEvents.some((event) => event.type === "workplan_created")) {
-      throw new Error("expected workplan_created event");
+    const approval = workplanEvents.find((event) => event.type === "workplan_approval_requested");
+    if (!approval) {
+      throw new Error("expected workplan_approval_requested event");
     }
+    if (workplanEvents.some((event) => event.type === "workplan_created")) {
+      throw new Error("new workplan flow must not emit legacy workplan_created");
+    }
+
+    await fetchJson(`/api/sessions/${planEncoded}/workplan/approve`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
 
     let duplicateRejected = false;
     try {
@@ -257,13 +295,18 @@ async function main() {
       throw new Error("expected duplicate workplan generation to return 409");
     }
 
+    // Clean up generated artifacts (always delete, don't restore)
+    try { fs.unlinkSync(expectedWorkplanPath); } catch {}
+    try { fs.unlinkSync(expectedDesignPath); } catch {}
+
     console.log("smoke ok");
+  } catch (error) {
+    if (stderr.trim()) {
+      console.error("[server stderr]", stderr.trim());
+    }
+    throw error;
   } finally {
     child.kill();
-  }
-
-  if (stderr.trim()) {
-    console.error(stderr.trim());
   }
 }
 

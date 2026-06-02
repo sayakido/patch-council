@@ -21,7 +21,14 @@ const {
 } = require("../engine/design-council");
 
 const prompts = require("../engine/prompts");
-const { buildWorkplanBrief, parseWorkplanJson, validateWorkplan, generateWorkplanForSession } = require("../engine/workplan");
+const { buildWorkplanBrief, generateWorkplanForSession } = require("../engine/workplan");
+const {
+  buildWorkplanArtifactPath,
+  ensureWorkplanDirectory,
+  assertWorkplanWritable,
+  scanWorkplanContract,
+  commitWorkplanArtifact,
+} = require("../engine/workplan-artifact");
 
 const MINIMAL_CONFIG = {
   agents: {
@@ -778,123 +785,6 @@ async function testWorkplanEventConstants() {
   pass();
 }
 
-async function testWorkplanJsonParserAndValidator() {
-  setupTest("workplan JSON parser and validator");
-
-  const valid = parseWorkplanJson(JSON.stringify({
-    title: "Title",
-    rationale: "Why",
-    goal: "Goal",
-    scope: ["scope"],
-    non_goals: ["no"],
-    tasks: [{ id: "T1", title: "Task", description: "Do it", files: [], depends_on: [], verification: ["npm run check"] }],
-    risks: [{ risk: "Risk", mitigation: "Mitigation" }],
-  }));
-  assert.equal(valid.ok, true);
-  assert.equal(validateWorkplan(valid.workplan).ok, true);
-
-  assert.equal(parseWorkplanJson("not json").ok, false);
-
-  const incomplete = parseWorkplanJson(JSON.stringify({ title: "Missing fields" }));
-  assert.equal(incomplete.ok, true);
-  const invalid = validateWorkplan(incomplete.workplan);
-  assert.equal(invalid.ok, false);
-  assert.match(invalid.error, /rationale|goal|tasks/);
-
-  const missingVerification = validateWorkplan({
-    title: "Title",
-    rationale: "Why",
-    goal: "Goal",
-    scope: [],
-    non_goals: [],
-    tasks: [{ id: "T1", title: "Task", description: "Do it", files: [], depends_on: [], verification: [] }],
-    risks: [],
-  });
-  assert.equal(missingVerification.ok, false);
-  assert.match(missingVerification.error, /verification/);
-
-  teardownTest();
-  pass();
-}
-
-async function testGenerateWorkplanForDoneSession() {
-  setupTest("generate workplan for done session");
-
-  const store = new SessionStore(testDir);
-  const session = store.createSession("topic");
-  const plan = {
-    title: "Plan",
-    rationale: "Why",
-    goal: "Goal",
-    scope: ["scope"],
-    non_goals: ["no execution"],
-    tasks: [{ id: "T1", title: "Task", description: "Do it", files: [], depends_on: [], verification: ["npm run check"] }],
-    risks: [],
-  };
-
-  for (const event of [
-    { schema_version: 1, seq: 0, type: EVENTS.SESSION_STARTED, phase: "discussion", session_id: session.id, started_at: "2026-06-01T10:00:00+08:00", topic: "topic", mode: "council", config: {}, capabilities: {}, agents: [] },
-    { schema_version: 1, seq: 1, type: EVENTS.AGENT_TURN_COMPLETED, phase: "discussion", session_id: session.id, turn: 1, agent: "codex", content: "Need server API and UI card." },
-    { schema_version: 1, seq: 2, type: EVENTS.FINALIZED, phase: "discussion", session_id: session.id, summary: "Build workplan generation.", next_steps: ["Add API"] },
-    { schema_version: 1, seq: 3, type: EVENTS.SESSION_FINISHED, phase: "finalized", session_id: session.id, finished_at: "2026-06-01T10:01:00+08:00", outcome: "discussion_only", duration_ms: 60000, turn_count: 1, distinct_agents: ["codex"], error_count: 0 },
-  ]) store.appendEvent(session.dir, event);
-
-  const emitted = [];
-  const result = await generateWorkplanForSession({
-    config: MINIMAL_CONFIG,
-    sessionStore: store,
-    sessionDir: session.dir,
-    sessionId: session.id,
-    prompts,
-    runAgent: async () => ({ ok: true, text: JSON.stringify(plan) }),
-    onEvent: (event) => {
-      emitted.push(event);
-      store.appendEvent(session.dir, event);
-    },
-  });
-
-  assert.equal(result.ok, true);
-  assert.ok(emitted.some((e) => e.type === EVENTS.WORKPLAN_GENERATION_STARTED));
-  assert.ok(emitted.some((e) => e.type === EVENTS.WORKPLAN_CREATED));
-  assert.equal(store.deriveState(session.dir).workplan_status, "created");
-
-  teardownTest();
-  pass();
-}
-
-async function testGenerateWorkplanFailureAllowsRetry() {
-  setupTest("generate workplan failure event");
-
-  const store = new SessionStore(testDir);
-  const session = store.createSession("topic");
-  for (const event of [
-    { schema_version: 1, seq: 0, type: EVENTS.SESSION_STARTED, phase: "discussion", session_id: session.id, started_at: "2026-06-01T10:00:00+08:00", topic: "topic", mode: "council", config: {}, capabilities: {}, agents: [] },
-    { schema_version: 1, seq: 1, type: EVENTS.FINALIZED, phase: "discussion", session_id: session.id, summary: "Summary", next_steps: [] },
-    { schema_version: 1, seq: 2, type: EVENTS.SESSION_FINISHED, phase: "finalized", session_id: session.id, finished_at: "2026-06-01T10:01:00+08:00", outcome: "discussion_only", duration_ms: 60000, turn_count: 0, distinct_agents: [], error_count: 0 },
-  ]) store.appendEvent(session.dir, event);
-
-  const emitted = [];
-  const result = await generateWorkplanForSession({
-    config: MINIMAL_CONFIG,
-    sessionStore: store,
-    sessionDir: session.dir,
-    sessionId: session.id,
-    prompts,
-    runAgent: async () => ({ ok: true, text: "{ invalid json" }),
-    onEvent: (event) => {
-      emitted.push(event);
-      store.appendEvent(session.dir, event);
-    },
-  });
-
-  assert.equal(result.ok, false);
-  assert.ok(emitted.some((e) => e.type === EVENTS.WORKPLAN_GENERATION_FAILED));
-  assert.equal(store.deriveState(session.dir).workplan_status, "failed");
-
-  teardownTest();
-  pass();
-}
-
 async function testWorkplanPromptRendersContract() {
   setupTest("workplan prompt renders contract");
 
@@ -903,11 +793,134 @@ async function testWorkplanPromptRendersContract() {
     brief: "brief",
   });
 
-  assert.match(rendered, /strict JSON/i);
-  assert.match(rendered, /verification/);
-  assert.match(rendered, /non_goals/);
-  assert.match(rendered, /Do not execute/i);
-  assert.match(rendered, /brief/);
+  // Legacy prompt now redirects to new council prompt set
+  assert.match(rendered, /Legacy prompt/i);
+  assert.match(rendered, /workplan_draft\.md/);
+  assert.match(rendered, /workplan_review\.md/);
+  assert.match(rendered, /workplan_finalize\.md/);
+
+  teardownTest();
+  pass();
+}
+
+async function testWorkplanCouncilPromptsRenderContract() {
+  setupTest("workplan council prompts render contract");
+
+  const draft = prompts.renderPrompt("workplan_draft.md", {
+    topic: "feature",
+    source_design_path: "docs/designs/feature.md",
+    source_design_commit: "abc123",
+    design: "# Design",
+    context: "npm run check\nnpm run smoke",
+  });
+  assert.match(draft, /writing-plans/i);
+  assert.match(draft, /docs\/designs\/feature\.md/);
+  assert.match(draft, /Do not implement code/i);
+  assert.match(draft, /checkbox/i);
+
+  const review = prompts.renderPrompt("workplan_review.md", {
+    artifact_path: "docs/workplans/feature.md",
+    workplan_commit: "def456",
+    workplan: "# Plan",
+    source_design_path: "docs/designs/feature.md",
+    source_design_commit: "abc123",
+  });
+  assert.match(review, /blockers/);
+  assert.match(review, /placeholder|占位/i);
+
+  const authorResponse = prompts.renderPrompt("workplan_author_response.md", {
+    source_design_path: "docs/designs/feature.md",
+    source_design_commit: "abc123",
+    design: "# Design",
+    artifact_path: "docs/workplans/feature.md",
+    workplan_commit: "def456",
+    workplan: "# Plan",
+    review: "Fix scope",
+    signal: "{}",
+  });
+  assert.match(authorResponse, /accept|partially_accept|reject/);
+  assert.match(authorResponse, /revision_required/);
+  assert.match(authorResponse, /Do not modify files/i);
+
+  const revision = prompts.renderPrompt("workplan_revision.md", {
+    source_design_path: "docs/designs/feature.md",
+    source_design_commit: "abc123",
+    design: "# Design",
+    artifact_path: "docs/workplans/feature.md",
+    workplan_commit: "def456",
+    workplan: "# Plan",
+    review: "Fix scope",
+    signal: "{}",
+    author_response: "{}",
+    author_signal: "{}",
+  });
+  assert.match(revision, /source design/i);
+  assert.match(revision, /complete Markdown workplan/i);
+
+  const finalize = prompts.renderPrompt("workplan_finalize.md", {
+    source_design_path: "docs/designs/feature.md",
+    source_design_commit: "abc123",
+    artifact_path: "docs/workplans/feature.md",
+    workplan_commit: "ghi789",
+    transcript: "signals",
+  });
+  assert.match(finalize, /request user approval/i);
+  assert.doesNotMatch(finalize, /execute code/i);
+
+  teardownTest();
+  pass();
+}
+
+async function testWorkplanArtifactHelpers() {
+  setupTest("workplan artifact helpers");
+
+  const artifactPath = buildWorkplanArtifactPath(testDir, "Workplan Council v1!");
+  assert.match(artifactPath, /docs[\\/]workplans[\\/]\d{4}-\d{2}-\d{2}-workplan-council-v1\.md$/);
+
+  ensureWorkplanDirectory(artifactPath);
+  assert.equal(fs.existsSync(path.dirname(artifactPath)), true);
+
+  const ok = scanWorkplanContract([
+    "# Feature Implementation Plan",
+    "",
+    "**Source Design:** docs/designs/x.md",
+    "**Source Design Commit:** abc123",
+    "**Goal:** Build it",
+    "**Architecture:** Small service.",
+    "**Tech Stack:** Node.js",
+    "",
+    "## File Structure",
+    "- Modify: `apps/patchcouncil-ui/server.js` - API route.",
+    "",
+    "### Task 1: API",
+    "- [ ] **Step 1: Run check**",
+    "Run: `npm run check`",
+    "Expected: PASS",
+    "",
+    "## Self-Review",
+    "- Spec coverage: covered",
+    "- Placeholder scan: clean",
+    "- Type / naming consistency: consistent",
+    "- Scope check: scoped",
+  ].join("\n"));
+  assert.equal(ok.ok, true);
+
+  const bad = scanWorkplanContract([
+    "# Test Implementation Plan",
+    "**Source Design:** docs/designs/x.md",
+    "**Source Design Commit:** abc123",
+    "## File Structure",
+    "- File: `test.js`",
+    "- [ ] **Step 1: Do it**",
+    "Run: `npm run check`",
+    "## Self-Review",
+    "TBD: fix this",
+  ].join("\n"));
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /placeholder/i);
+
+  fs.writeFileSync(artifactPath, "user edit", "utf8");
+  assert.equal(assertWorkplanWritable(artifactPath, { allowExisting: false }).ok, false);
 
   teardownTest();
   pass();
@@ -938,6 +951,83 @@ async function testWorkplanBriefIncludesAllAgentTurns() {
   assert.match(brief, /transcript.jsonl/);
   assert.match(brief, /Prior discussion about architecture/);
   assert.match(brief, /Source Session Summary/);
+
+  teardownTest();
+  pass();
+}
+
+async function testGenerateMarkdownWorkplanCouncilFlow() {
+  setupTest("generate markdown workplan council flow");
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("markdown workplan");
+  const designPath = path.join(testDir, "docs", "designs", "2026-06-02-feature.md");
+  fs.mkdirSync(path.dirname(designPath), { recursive: true });
+  fs.writeFileSync(designPath, "# Feature Design\n\n## Goal\n\nBuild markdown workplans.\n", "utf8");
+
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 0, type: EVENTS.SESSION_STARTED, phase: "brainstorming",
+    session_id: session.id, started_at: "2026-06-02T10:00:00+08:00",
+    topic: "markdown workplan", mode: "design_council", config: {}, capabilities: {}, agents: [],
+  });
+  store.appendEvent(session.dir, { schema_version: 1, seq: 1, type: EVENTS.DESIGN_FILE_WRITTEN, phase: "brainstorming", session_id: session.id, artifact_path: designPath, generator: "codex", title: "Feature Design", revision: 0 });
+  store.appendEvent(session.dir, { schema_version: 1, seq: 2, type: EVENTS.DESIGN_COMMIT_CREATED, phase: "brainstorming", session_id: session.id, artifact_path: designPath, commit: "abc123", commit_message: "docs: draft feature design" });
+  store.appendEvent(session.dir, { schema_version: 1, seq: 3, type: EVENTS.SESSION_FINISHED, phase: "finalized", session_id: session.id, finished_at: "2026-06-02T10:01:00+08:00", outcome: "discussion_only", duration_ms: 1, turn_count: 0, distinct_agents: [], error_count: 0 });
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.workplan_council = { min_distinct_reviewers: 1 };
+
+  let rev = 0;
+  const result = await generateWorkplanForSession({
+    config,
+    sessionStore: store,
+    sessionDir: session.dir,
+    sessionId: session.id,
+    projectRoot: testDir,
+    topic: "markdown workplan",
+    prompts,
+    runAgent: async (_agentName, _agentConfig, prompt) => {
+      if (prompt.includes("drafting a writing-plans-style")) {
+        return { ok: true, text: "# Markdown Workplan Implementation Plan\n\n**Source Design:** docs/designs/2026-06-02-feature.md\n**Source Design Commit:** abc123\n**Goal:** Build it.\n**Architecture:** Small service.\n**Tech Stack:** Node.js\n\n---\n\n## File Structure\n\n- Modify: `apps/patchcouncil-ui/server.js` - API.\n\n### Task 1: API\n\n- [ ] **Step 1: Run check**\n\nRun: `npm run check`\nExpected: PASS\n\n## Self-Review\n\n- Spec coverage: covered\n- Placeholder scan: clean\n- Type / naming consistency: consistent\n- Scope check: scoped\n" };
+      }
+      if (prompt.includes("reviewing a PatchCouncil Markdown workplan")) {
+        return { ok: true, text: JSON.stringify({ stance: "mixed", confidence: "high", finalize_readiness: "not_ready", blockers: [{ type: "issue", text: "Need smoke verification." }], agreements: [], disagreements: [], recommended_next_step: "revise workplan", analysis: "Add smoke verification." }) };
+      }
+      if (prompt.includes("Review the reviewer findings and decide whether to accept")) {
+        return { ok: true, text: JSON.stringify({ decision: "partially_accept", reason: "Smoke verification should be added; existing file scope is already sufficient.", revision_required: true, stance: "mixed", confidence: "high", finalize_readiness: "not_ready", blockers: [{ type: "issue", text: "Need smoke verification." }], agreements: ["Add smoke verification."], disagreements: ["No extra file boundary needed."], recommended_next_step: "revise workplan", analysis: "Accept the verification concern and keep the scope narrow." }) };
+      }
+      if (prompt.includes("Revise the complete Markdown workplan")) {
+        return { ok: true, text: "# Markdown Workplan Implementation Plan\n\n**Source Design:** docs/designs/2026-06-02-feature.md\n**Source Design Commit:** abc123\n**Goal:** Build it.\n**Architecture:** Small service.\n**Tech Stack:** Node.js\n\n---\n\n## File Structure\n\n- Modify: `apps/patchcouncil-ui/server.js` - API.\n\n### Task 1: API\n\n- [ ] **Step 1: Run smoke**\n\nRun: `npm run smoke`\nExpected: PASS\n\n## Self-Review\n\n- Spec coverage: covered\n- Placeholder scan: clean\n- Type / naming consistency: consistent\n- Scope check: scoped\n" };
+      }
+      if (prompt.includes("finalizing a PatchCouncil workplan review loop")) {
+        return { ok: true, text: JSON.stringify({ decision: "finalize", next_agent: null, role: null, reason: "ready for user approval" }) };
+      }
+      return { ok: false, error: "unexpected prompt" };
+    },
+    runGit: async (args) => {
+      if (args[0] === "rev-parse") {
+        rev++;
+        return { ok: true, text: rev === 1 ? "def456\n" : "ghi789\n" };
+      }
+      return { ok: true, text: "" };
+    },
+    onEvent: (event) => store.appendEvent(session.dir, event),
+  });
+
+  assert.equal(result.ok, true);
+  const events = store.readEvents(session.dir);
+  assert.ok(events.some((e) => e.type === EVENTS.WORKPLAN_DRAFT_COMMITTED));
+  assert.ok(events.some((e) => e.type === EVENTS.WORKPLAN_REVIEW_COMPLETED));
+  assert.ok(events.some((e) => e.type === EVENTS.WORKPLAN_AUTHOR_RESPONSE_COMPLETED && e.decision === "partially_accept"));
+  assert.ok(events.some((e) => e.type === EVENTS.AGENT_TURN_COMPLETED && e.agent === "codex" && e.signal && e.signal.recommended_next_step === "revise workplan"));
+  assert.ok(events.some((e) => e.type === EVENTS.WORKPLAN_REVISION_COMMITTED));
+  assert.ok(events.some((e) => e.type === EVENTS.WORKPLAN_APPROVAL_REQUESTED));
+  assert.equal(events.some((e) => e.type === EVENTS.WORKPLAN_CREATED), false);
+
+  const state = store.deriveState(session.dir);
+  assert.equal(state.status, "waiting_for_user");
+  assert.equal(state.waiting_for, "workplan_approval");
+  assert.equal(state.workplan.latest_commit, "ghi789");
 
   teardownTest();
   pass();
@@ -1025,35 +1115,83 @@ async function testWorkplanStateAndTranscriptEvents() {
   pass();
 }
 
-async function testGenerateWorkplanExceptionWritesFailed() {
-  setupTest("generate workplan exception writes failed");
+async function testWorkplanCouncilStateAndTranscriptEvents() {
+  setupTest("workplan council events derive state and transcript");
 
   const store = new SessionStore(testDir);
-  const session = store.createSession("topic");
-  for (const event of [
-    { schema_version: 1, seq: 0, type: EVENTS.SESSION_STARTED, phase: "discussion", session_id: session.id, started_at: "2026-06-01T10:00:00+08:00", topic: "topic", mode: "council", config: {}, capabilities: {}, agents: [] },
-    { schema_version: 1, seq: 1, type: EVENTS.FINALIZED, phase: "discussion", session_id: session.id, summary: "Summary", next_steps: [] },
-    { schema_version: 1, seq: 2, type: EVENTS.SESSION_FINISHED, phase: "finalized", session_id: session.id, finished_at: "2026-06-01T10:01:00+08:00", outcome: "discussion_only", duration_ms: 60000, turn_count: 0, distinct_agents: [], error_count: 0 },
-  ]) store.appendEvent(session.dir, event);
+  const session = store.createSession("workplan council");
+  const base = {
+    schema_version: 1,
+    session_id: session.id,
+    phase: "finalized",
+  };
+  store.appendEvent(session.dir, {
+    schema_version: 1,
+    seq: 0,
+    type: EVENTS.SESSION_STARTED,
+    phase: "brainstorming",
+    session_id: session.id,
+    started_at: "2026-06-02T10:00:00+08:00",
+    topic: "workplan council",
+    mode: "design_council",
+    config: {},
+    capabilities: {},
+    agents: [],
+  });
+  store.appendEvent(session.dir, { ...base, seq: 1, type: EVENTS.SESSION_FINISHED, finished_at: "2026-06-02T10:01:00+08:00", outcome: "discussion_only", duration_ms: 1, turn_count: 0, distinct_agents: [], error_count: 0 });
+  store.appendEvent(session.dir, { ...base, seq: 2, type: EVENTS.WORKPLAN_DRAFT_WRITTEN, artifact_path: "docs/workplans/2026-06-02-feature.md", generator: "codex", source_design_commit: "abc123", title: "Feature Implementation Plan", revision: 0 });
+  store.appendEvent(session.dir, { ...base, seq: 3, type: EVENTS.WORKPLAN_DRAFT_COMMITTED, artifact_path: "docs/workplans/2026-06-02-feature.md", source_design_commit: "abc123", commit: "def456", commit_message: "docs: draft feature workplan" });
+  store.appendEvent(session.dir, { ...base, seq: 4, type: EVENTS.WORKPLAN_REVIEW_COMPLETED, artifact_path: "docs/workplans/2026-06-02-feature.md", workplan_commit: "def456", reviewer: "claude", source_agent_turn_seq: 10, requires_revision: true });
+  store.appendEvent(session.dir, { ...base, seq: 5, type: EVENTS.WORKPLAN_AUTHOR_RESPONSE_COMPLETED, artifact_path: "docs/workplans/2026-06-02-feature.md", workplan_commit: "def456", author: "codex", source_review_seq: 4, source_agent_turn_seq: 11, decision: "partially_accept", revision_required: true });
+  store.appendEvent(session.dir, { ...base, seq: 6, type: EVENTS.WORKPLAN_REVISION_COMMITTED, artifact_path: "docs/workplans/2026-06-02-feature.md", source_design_commit: "abc123", source_workplan_commit: "def456", commit: "ghi789", commit_message: "docs: revise feature workplan" });
+  store.appendEvent(session.dir, { ...base, seq: 7, type: EVENTS.WORKPLAN_APPROVAL_REQUESTED, artifact_path: "docs/workplans/2026-06-02-feature.md", workplan_commit: "ghi789", requested_at: "2026-06-02T10:02:00+08:00" });
 
-  const emitted = [];
-  const result = await generateWorkplanForSession({
-    config: MINIMAL_CONFIG,
-    sessionStore: store,
-    sessionDir: session.dir,
-    sessionId: session.id,
-    prompts,
-    runAgent: async () => { throw new Error("simulated crash"); },
-    onEvent: (event) => {
-      emitted.push(event);
-      store.appendEvent(session.dir, event);
-    },
+  let state = store.deriveState(session.dir);
+  assert.equal(state.status, "waiting_for_user");
+  assert.equal(state.waiting_for, "workplan_approval");
+  assert.equal(state.workplan.status, "awaiting_approval");
+  assert.equal(state.workplan.artifact_path, "docs/workplans/2026-06-02-feature.md");
+  assert.equal(state.workplan.draft_commit, "def456");
+  assert.equal(state.workplan.latest_commit, "ghi789");
+  assert.equal(state.workplan.approved_commit, null);
+
+  store.appendEvent(session.dir, { ...base, seq: 8, type: EVENTS.WORKPLAN_APPROVED, artifact_path: "docs/workplans/2026-06-02-feature.md", approved_commit: "ghi789", approved_at: "2026-06-02T10:03:00+08:00", approved_by: "host" });
+  state = store.deriveState(session.dir);
+  const transcript = store.generateTranscript(session.dir);
+
+  assert.equal(state.status, "done");
+  assert.equal(state.waiting_for, null);
+  assert.equal(state.workplan.status, "approved");
+  assert.equal(state.workplan.approved_commit, "ghi789");
+  assert.match(transcript, /Workplan approval requested/);
+  assert.match(transcript, /docs\/workplans\/2026-06-02-feature\.md/);
+  assert.match(transcript, /ghi789/);
+
+  teardownTest();
+  pass();
+}
+
+async function testLegacyJsonWorkplanStillDerivesState() {
+  setupTest("legacy JSON workplan still derives state");
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("legacy workplan");
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 0, type: EVENTS.SESSION_STARTED, phase: "discussion",
+    session_id: session.id, started_at: "2026-06-02T10:00:00+08:00",
+    topic: "legacy", mode: "council", config: {}, capabilities: {}, agents: [],
+  });
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 1, type: EVENTS.WORKPLAN_CREATED, phase: "finalized",
+    session_id: session.id, created_at: "2026-06-02T10:01:00+08:00",
+    generator: "codex", source: {},
+    workplan: { title: "Legacy", rationale: "Old", goal: "Goal", scope: [], non_goals: [], tasks: [{ id: "T1", title: "Task", description: "Do it", files: [], depends_on: [], verification: ["npm run check"] }], risks: [] },
   });
 
-  assert.equal(result.ok, false);
-  assert.match(result.error, /simulated crash/);
-  assert.ok(emitted.some((e) => e.type === EVENTS.WORKPLAN_GENERATION_FAILED), "missing workplan_generation_failed after exception");
-  assert.equal(store.deriveState(session.dir).workplan_status, "failed");
+  const state = store.deriveState(session.dir);
+  assert.equal(state.has_workplan, true);
+  assert.equal(state.workplan_status, "created");
+  assert.equal(state.workplan.status, "legacy_json_created");
 
   teardownTest();
   pass();
@@ -1781,13 +1919,14 @@ async function main() {
   await testWorkbenchEventConstants();
   await testWorkplanEventConstants();
   await testWorkbenchStateAndTranscriptEvents();
-  await testWorkplanJsonParserAndValidator();
   await testWorkplanBriefIncludesAllAgentTurns();
   await testWorkplanPromptRendersContract();
-  await testGenerateWorkplanForDoneSession();
-  await testGenerateWorkplanFailureAllowsRetry();
-  await testGenerateWorkplanExceptionWritesFailed();
+  await testWorkplanCouncilPromptsRenderContract();
+  await testWorkplanArtifactHelpers();
+  await testGenerateMarkdownWorkplanCouncilFlow();
   await testWorkplanStateAndTranscriptEvents();
+  await testWorkplanCouncilStateAndTranscriptEvents();
+  await testLegacyJsonWorkplanStillDerivesState();
   await testHappyPathSingleAgent();
   await testHappyPathTwoAgents();
   await testJsonParseFailure();

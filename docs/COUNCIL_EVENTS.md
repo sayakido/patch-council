@@ -262,9 +262,23 @@ session_finished
 agent_error
 coordinator_error
 session_error
-workplan_generation_started
-workplan_created
+workplan_generation_started      (legacy JSON, 保留但不再用于新流程)
+workplan_created                 (legacy JSON, 保留但不再用于新流程)
 workplan_generation_failed
+workplan_draft_started
+workplan_draft_written
+workplan_draft_committed
+workplan_draft_commit_failed
+workplan_review_started
+workplan_review_completed
+workplan_author_response_started
+workplan_author_response_completed
+workplan_revision_written
+workplan_revision_committed
+workplan_revision_commit_failed
+workplan_approval_requested
+workplan_approved
+workplan_approval_rejected
 brainstorming_started
 brainstorming_question_created
 brainstorming_answer_received
@@ -275,9 +289,158 @@ design_revision_written
 design_revision_committed
 ```
 
-## Workplan events
+## Workplan Council v1 事件
 
-Workplan events are post-discussion artifacts. They use `phase: "finalized"` because the discussion phase has already completed. They do not change `session_finished.outcome`; consumers should use `has_workplan` and `workplan_status` in derived state.
+Workplan Council v1 从已提交的 design artifact 生成 writing-plans 风格 Markdown workplan，经过 council review / revision 后等待用户批准。所有 workplan 事件使用 `phase: "finalized"`，不修正 `session_finished.outcome`；调用方应通过派生状态里的 `workplan.status` 判断计划产物状态。
+
+### 生成流程
+
+```text
+workplan_draft_started
+  -> workplan_draft_written
+  -> workplan_draft_committed (or workplan_draft_commit_failed)
+  -> workplan_review_started
+  -> (agent_turn_completed by reviewer)
+  -> workplan_review_completed (if requires_author_response: workplan_author_response_started -> agent_turn_completed by author -> workplan_author_response_completed)
+  -> (workplan_revision_written -> workplan_revision_committed if revision needed)
+  -> workplan_approval_requested
+  -> (user action: workplan_approved | workplan_approval_rejected)
+```
+
+### 事件说明
+
+#### workplan_draft_started
+
+Author agent (codex) 开始根据 source design 起草 workplan。
+
+```json
+{
+  "type": "workplan_draft_started",
+  "phase": "finalized",
+  "generator": "codex",
+  "source_design_path": "docs/designs/2026-06-02-topic.md",
+  "source_design_commit": "abc1234"
+}
+```
+
+#### workplan_draft_written
+
+Workplan Markdown 已写入文件系统并通过合同扫描。
+
+```json
+{
+  "type": "workplan_draft_written",
+  "phase": "finalized",
+  "artifact_path": "docs/workplans/2026-06-02-topic.md",
+  "generator": "codex",
+  "source_design_commit": "abc1234",
+  "title": "Topic Implementation Plan",
+  "revision": 0
+}
+```
+
+#### workplan_draft_committed / workplan_draft_commit_failed
+
+Workplan 已通过 git commit（或 commit 失败）。
+
+```json
+{
+  "type": "workplan_draft_committed",
+  "artifact_path": "docs/workplans/2026-06-02-topic.md",
+  "source_design_commit": "abc1234",
+  "commit": "def5678",
+  "commit_message": "docs: draft topic workplan"
+}
+```
+
+#### workplan_review_started / workplan_review_completed
+
+Coordinator 路由 reviewer agent，reviewer 完成审查。`requires_revision` 表示是否需要 author response / revision。
+
+```json
+{
+  "type": "workplan_review_completed",
+  "artifact_path": "docs/workplans/2026-06-02-topic.md",
+  "workplan_commit": "def5678",
+  "reviewer": "claude",
+  "source_agent_turn_seq": 20,
+  "requires_revision": true
+}
+```
+
+#### workplan_author_response_started / workplan_author_response_completed
+
+Author (codex) 回应 reviewer findings。`decision` 取 `accept` / `partially_accept` / `reject`。
+
+```json
+{
+  "type": "workplan_author_response_completed",
+  "artifact_path": "docs/workplans/2026-06-02-topic.md",
+  "workplan_commit": "def5678",
+  "author": "codex",
+  "source_review_seq": 20,
+  "source_agent_turn_seq": 21,
+  "decision": "partially_accept",
+  "revision_required": true
+}
+```
+
+#### workplan_revision_written / workplan_revision_committed / workplan_revision_commit_failed
+
+Author 根据 reviewer 反馈修订 workplan 并重新 commit。
+
+#### workplan_approval_requested
+
+Review loop 完成，等待 Host 批准。
+
+```json
+{
+  "type": "workplan_approval_requested",
+  "phase": "finalized",
+  "artifact_path": "docs/workplans/2026-06-02-topic.md",
+  "workplan_commit": "ghi9012",
+  "requested_at": "2026-06-02T10:05:00+08:00"
+}
+```
+
+#### workplan_approved / workplan_approval_rejected
+
+Host 批准或拒绝 workplan。
+
+```json
+{
+  "type": "workplan_approved",
+  "phase": "finalized",
+  "artifact_path": "docs/workplans/2026-06-02-topic.md",
+  "approved_commit": "ghi9012",
+  "approved_at": "2026-06-02T10:06:00+08:00"
+}
+```
+
+### Legacy JSON workplan
+
+旧 `workplan_created` 事件（legacy JSON workplan v1）在新流程中不再发出。旧 session 可能仍包含该事件，消费者必须兼容。
+
+### 派生状态中的 workplan
+
+```json
+{
+  "workplan": {
+    "artifact_path": "docs/workplans/2026-06-02-topic.md",
+    "source_design_commit": "abc1234",
+    "draft_commit": "def5678",
+    "latest_commit": "ghi9012",
+    "approved_commit": null,
+    "status": "awaiting_approval",
+    "title": "Topic Implementation Plan",
+    "revision": 1
+  }
+}
+```
+
+`status` 取值：`none`、`drafting`、`draft_written`、`draft_committed`、`reviewing`、`reviewed`、`author_responding`、`author_responded`、`revision_written`、`revision_committed`、`draft_commit_failed`、`revision_commit_failed`、`awaiting_approval`、`approved`、`rejected`、`failed`、`legacy_json_created`。
+
+`waiting_for_user` 状态新增 `"workplan_approval"`：当 workplan 处于 `awaiting_approval` 时，session status 应为 `waiting_for_user`，`waiting_for` 设为 `"workplan_approval"`。
 
 ## session_started
 
@@ -823,6 +986,8 @@ Reviewer 反馈后的 revision。`source_commit` 记录被修订的 commit。
 
 当存在未回答的 brainstorming question 时，`status` 应被设为 `waiting_for_user`，`waiting_for` 设为 `"brainstorming_answer"`。engine 暂停，等待 Host 通过 `/brainstorming/answer` API 提交回答，然后 resume。
 
+当 workplan 处于 `awaiting_approval` 时，`status` 应被设为 `waiting_for_user`，`waiting_for` 设为 `"workplan_approval"`。Host 可通过 `/workplan/approve` 或 `/workplan/reject` API 批准或拒绝。
+
 ## 错误事件
 
 错误必须是一等事件，不能只依赖异常日志。
@@ -984,9 +1149,22 @@ cancelled
 
 ```text
 none
-generating
-created
+drafting
+draft_written
+draft_committed
+reviewing
+reviewed
+author_responding
+author_responded
+revision_written
+revision_committed
+draft_commit_failed
+revision_commit_failed
+awaiting_approval
+approved
+rejected
 failed
+legacy_json_created
 ```
 
 ### transcript.md

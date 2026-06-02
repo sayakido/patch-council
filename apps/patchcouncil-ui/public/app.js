@@ -122,12 +122,24 @@ function latestEvent(type) {
 }
 
 function workplanState() {
-  var created = latestEvent("workplan_created");
-  if (created) return { status: "created", event: created };
-  var failed = latestEvent("workplan_generation_failed");
-  var started = latestEvent("workplan_generation_started");
-  if (started && (!failed || started.seq > failed.seq)) return { status: "generating", event: started };
+  var approved = latestEvent("workplan_approved");
+  if (approved) return { status: "approved", event: approved };
+  var rejected = latestEvent("workplan_approval_rejected");
+  if (rejected) return { status: "rejected", event: rejected };
+  var approval = latestEvent("workplan_approval_requested");
+  if (approval) return { status: "awaiting_approval", event: approval };
+  var failed = latestEvent("workplan_generation_failed") || latestEvent("workplan_draft_commit_failed") || latestEvent("workplan_revision_commit_failed");
   if (failed) return { status: "failed", event: failed };
+  var revision = latestEvent("workplan_revision_committed") || latestEvent("workplan_revision_written");
+  if (revision) return { status: "revising", event: revision };
+  var authorResponse = latestEvent("workplan_author_response_completed") || latestEvent("workplan_author_response_started");
+  if (authorResponse) return { status: "author_responding", event: authorResponse };
+  var review = latestEvent("workplan_review_completed") || latestEvent("workplan_review_started");
+  if (review) return { status: "reviewing", event: review };
+  var draft = latestEvent("workplan_draft_committed") || latestEvent("workplan_draft_written") || latestEvent("workplan_draft_started");
+  if (draft) return { status: "drafting", event: draft };
+  var legacy = latestEvent("workplan_created");
+  if (legacy) return { status: "legacy_json_created", event: legacy };
   return { status: "none", event: null };
 }
 
@@ -140,15 +152,14 @@ function renderWorkplanCard(session) {
   title.textContent = "Workplan";
   section.append(title);
 
-  if (!session || session.status !== "done") {
-    var muted = document.createElement("p");
-    muted.className = "muted";
-    muted.textContent = "Workplan is available after a session finishes successfully.";
-    section.append(muted);
-    return section;
-  }
-
   if (state.status === "none") {
+    if (!session.design || !session.design.latest_commit) {
+      var noDesign = document.createElement("p");
+      noDesign.className = "muted";
+      noDesign.textContent = "Workplan requires a committed design.";
+      section.append(noDesign);
+      return section;
+    }
     var button = document.createElement("button");
     button.type = "button";
     button.className = "secondary";
@@ -158,56 +169,107 @@ function renderWorkplanCard(session) {
     return section;
   }
 
-  if (state.status === "generating") {
-    var muted2 = document.createElement("p");
-    muted2.className = "muted";
-    muted2.textContent = "Generating workplan...";
-    section.append(muted2);
+  if (["drafting", "reviewing", "author_responding", "revising"].indexOf(state.status) !== -1) {
+    var progress = document.createElement("p");
+    progress.className = "muted";
+    progress.textContent =
+      state.status === "drafting" ? "Generating workplan draft..." :
+      state.status === "reviewing" ? "Reviewing workplan..." :
+      state.status === "author_responding" ? "Responding to workplan review..." :
+      "Revising workplan...";
+    section.append(progress);
+    return section;
+  }
+
+  if (state.status === "awaiting_approval") {
+    appendWorkplanMeta(section, state.event);
+    var actions = document.createElement("div");
+    actions.className = "workplan-actions";
+    var approve = document.createElement("button");
+    approve.type = "button";
+    approve.textContent = "Approve Workplan";
+    approve.addEventListener("click", approveWorkplan);
+    var reject = document.createElement("button");
+    reject.type = "button";
+    reject.className = "secondary";
+    reject.textContent = "Reject";
+    reject.addEventListener("click", rejectWorkplan);
+    actions.append(approve, reject);
+    section.append(actions);
+    return section;
+  }
+
+  if (state.status === "approved") {
+    appendWorkplanMeta(section, state.event);
+    var approved = document.createElement("p");
+    approved.className = "muted";
+    approved.textContent = "Workplan approved.";
+    section.append(approved);
+    return section;
+  }
+
+  if (state.status === "rejected") {
+    appendWorkplanMeta(section, state.event);
+    var rejected = document.createElement("p");
+    rejected.className = "muted";
+    rejected.textContent = "Workplan rejected. Generate a new workplan to continue.";
+    section.append(rejected);
+    var retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "secondary";
+    retry.textContent = "Generate Workplan";
+    retry.addEventListener("click", generateWorkplan);
+    section.append(retry);
     return section;
   }
 
   if (state.status === "failed") {
-    var error = document.createElement("p");
-    error.className = "error-text";
-    error.textContent = state.event.message || "Workplan generation failed.";
-    var retryBtn = document.createElement("button");
-    retryBtn.type = "button";
-    retryBtn.className = "secondary";
-    retryBtn.textContent = "Generate Workplan";
-    retryBtn.addEventListener("click", generateWorkplan);
-    section.append(error, retryBtn);
+    appendWorkplanMeta(section, state.event);
+    var failed = document.createElement("p");
+    failed.className = "muted";
+    failed.textContent = "Workplan generation failed: " + (state.event.message || state.event.error || "unknown error");
+    section.append(failed);
+    var retryFailed = document.createElement("button");
+    retryFailed.type = "button";
+    retryFailed.className = "secondary";
+    retryFailed.textContent = "Retry";
+    retryFailed.addEventListener("click", generateWorkplan);
+    section.append(retryFailed);
     return section;
   }
 
-  var plan = state.event.workplan || {};
-  var heading = document.createElement("h4");
-  heading.textContent = plan.title || "Untitled workplan";
-  var goal = document.createElement("p");
-  goal.textContent = plan.goal || "";
-  section.append(heading, goal);
-
-  var tasks = document.createElement("ol");
-  tasks.className = "workplan-tasks";
-  for (var i = 0; i < (plan.tasks || []).length; i++) {
-    var task = plan.tasks[i];
-    var item = document.createElement("li");
-    var strong = document.createElement("strong");
-    strong.textContent = (task.id || "") + " " + (task.title || "Task").trim();
-    var desc = document.createElement("p");
-    desc.textContent = task.description || "";
-    var verify = document.createElement("p");
-    verify.className = "muted";
-    verify.textContent = "Verify: " + (task.verification || []).join("; ");
-    item.append(strong, desc, verify);
-    tasks.append(item);
+  if (state.status === "legacy_json_created") {
+    var legacy = document.createElement("p");
+    legacy.className = "muted";
+    legacy.textContent = "Legacy JSON workplan exists for this session.";
+    section.append(legacy);
+    return section;
   }
-  section.append(tasks);
 
-  var note = document.createElement("p");
-  note.className = "muted";
-  note.textContent = "Use Continue to discuss revisions in a new session.";
-  section.append(note);
   return section;
+}
+
+function appendWorkplanMeta(section, event) {
+  var pathLine = document.createElement("p");
+  pathLine.textContent = "Path: " + (event.artifact_path || "");
+  var commitLine = document.createElement("p");
+  commitLine.className = "muted";
+  commitLine.textContent = "Commit: " + (event.workplan_commit || event.commit || event.approved_commit || "");
+  section.append(pathLine, commitLine);
+}
+
+async function approveWorkplan() {
+  if (!activeSessionId) return;
+  await postJson("/api/sessions/" + encodeURIComponent(activeSessionId) + "/workplan/approve", {});
+  await loadSessions();
+}
+
+async function rejectWorkplan() {
+  if (!activeSessionId) return;
+  var reason = window.prompt("Reject reason", "需要修订 workplan");
+  if (reason === null) return;
+  await postJson("/api/sessions/" + encodeURIComponent(activeSessionId) + "/workplan/reject", { reason: reason });
+  await loadSessions();
 }
 
 async function generateWorkplan() {
@@ -237,16 +299,15 @@ function pollForWorkplanResult(sessionId) {
           lastPollSeq = newEvents[i].seq;
         }
         var state = workplanState();
-        if (state.status === "created" || state.status === "failed") {
+        if (state.status === "awaiting_approval" || state.status === "approved" || state.status === "rejected" || state.status === "failed") {
           clearInterval(pollInterval);
           pollInterval = null;
           await loadSessions();
           renderAll();
         } else {
-          renderThread(currentSession(), activeEvents);
-          renderRawEvents(activeEvents);
+          renderAll();
         }
-      } catch (_) { /* ignore */ }
+      } catch (_) { /* keep polling */ }
     })();
   }, 2000);
 }
@@ -379,8 +440,15 @@ function updateComposer() {
     els.phaseBadge.textContent = "idle";
   } else if (session && session.status === "waiting_for_user") {
     workspace.className = "workspace running";
-    els.composerInput.placeholder = "回答 brainstorming 问题...";
-    els.composerButton.textContent = "Answer";
+    if (session.waiting_for === "workplan_approval") {
+      els.composerInput.placeholder = "请在 Workplan 卡片中批准或拒绝...";
+      els.composerButton.textContent = "Waiting";
+      els.composerButton.disabled = true;
+    } else {
+      els.composerInput.placeholder = "回答 brainstorming 问题...";
+      els.composerButton.textContent = "Answer";
+      els.composerButton.disabled = false;
+    }
     els.cancelButton.classList.remove("hidden");
     els.sessionTitle.textContent = session.topic || session.session_id;
     els.phaseBadge.textContent = session.phase || session.status;
@@ -414,6 +482,9 @@ function renderStatus(session, events) {
   ];
   if (session && session.design && session.design.status !== "none") {
     rows.push(["Design", (session.design.latest_commit || "none") + " · " + (session.design.status || "")]);
+  }
+  if (session && session.workplan && session.workplan.status !== "none") {
+    rows.push(["Workplan", (session.workplan.latest_commit || "none") + " · " + (session.workplan.status || "")]);
   }
 
   els.statusGrid.replaceChildren.apply(els.statusGrid, rows.flatMap(function (pair) {

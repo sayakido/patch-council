@@ -16,7 +16,7 @@
 → 策略检查（min_distinct_agents、finalize gate、max_turns）
 → 循环，直到收束
 → coordinator 最终总结
-→ 可按需生成结构化 workplan
+→ design_council 模式可从已提交的 design artifact 生成 writing-plans 风格 Markdown workplan，经 council review / revision 后等待用户批准；暂不执行代码
 ```
 
 普通 `mode=council` 只读，不修改文件。`mode=design_council` 会在 brainstorming 后写入 `docs/designs/...md`，并只提交该 design artifact 作为 review 上下文锚点。讨论过程以结构化事件流写入 session 日志。

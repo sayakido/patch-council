@@ -26,9 +26,10 @@ Workbench v1 状态：
 - ~~Step 5: UI Real-Time~~ ✓ 完成
 - ~~Step 6: Workbench v1 (chat UI + config page + host controls + session fork)~~ ✓ 完成
 - ~~Step 7: 文档收尾~~ ✓ 完成
-- ~~Workplan v1: 讨论后生成结构化 workplan，暂不自动执行~~ ✓ 完成
+- ~~Workplan v1: 讨论后生成结构化 JSON workplan，暂不自动执行~~ ✓ 完成（已被 Workplan Council v1 取代）
 - ~~Agent Turn Signal v1: agent 发言结构化 signal + finalize gate~~ ✓ 完成
 - ~~Design Council Workflow v1: brainstorming prelude + git-backed design review~~ ✓ 完成
+- ~~Workplan Council v1: 从 design latest commit 生成 Markdown workplan，经过 council review/revision 后等待用户批准；暂不执行代码~~ ✓ 完成
 
 Workbench v1 已合并到 master。以下为后续方向。
 
@@ -36,7 +37,7 @@ Workbench v1 已合并到 master。以下为后续方向。
 
 1. （已完成：JSON 解析失败、未知 agent、最大轮数兜底已在 engine 中实现）
 2. （已完成：46 个 council engine 集成测试覆盖关键场景）
-3. （已完成）讨论后生成结构化 workplan，但暂不自动执行。
+3. （已完成：Workplan Council v1）从 design latest commit 生成 Markdown workplan，经过 review/revision 后等待用户批准；暂不执行代码。
 4. （已完成）design council 默认先澄清用户意图，提交 design draft，再进入 council review。
 5. 在 Workbench 中增加自然语言入口：
 
