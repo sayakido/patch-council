@@ -1,7 +1,16 @@
 "use strict";
 
+const fs = require("fs");
 const path = require("path");
 const { clipText, selectCoordinator } = require("./council");
+
+function latestDesignCommit(allEvents) {
+  return [...allEvents].reverse().find((e) => e.type === "design_revision_committed" || e.type === "design_commit_created");
+}
+
+function latestDesignFile(allEvents) {
+  return [...allEvents].reverse().find((e) => e.type === "design_revision_written" || e.type === "design_file_written");
+}
 
 function parseWorkplanJson(raw) {
   const text = String(raw || "").trim();
@@ -96,6 +105,17 @@ function buildWorkplanBrief(allEvents, options = {}) {
     sections.push(`## Source Workplan\n\n${priorWorkplan.workplan.title || ""}\n\n${priorWorkplan.workplan.goal || ""}`);
   }
 
+  const designCommit = latestDesignCommit(allEvents);
+  const designFile = latestDesignFile(allEvents);
+  if (started?.mode === "design_council" && designCommit && designFile) {
+    sections.push(`## Design Source\n\nPath: ${designFile.artifact_path}\nCommit: ${designCommit.commit}`);
+    try {
+      sections.push(`## Design Document\n\n${clipText(fs.readFileSync(designFile.artifact_path, "utf8"), limits.maxMessageChars)}`);
+    } catch (_) {
+      sections.push("Design document could not be read; use path and commit above.");
+    }
+  }
+
   const turnSections = agentTurns.map((event, index) => {
     const isRecent = index >= agentTurns.length - 2;
     const limit = isRecent ? limits.recentMessageChars : limits.maxMessageChars;
@@ -148,6 +168,11 @@ async function generateWorkplanForSession(options) {
     return { ok: false, error: "no available workplan generator", status: 409 };
   }
 
+  const started = allEvents.find((event) => event.type === "session_started");
+  if (started?.mode === "design_council" && !latestDesignCommit(allEvents)) {
+    return { ok: false, error: "design council workplan requires a design commit", status: 409 };
+  }
+
   let seq = nextSeq(allEvents);
   const generatedStartedAt = new Date().toISOString();
   onEvent({
@@ -162,7 +187,7 @@ async function generateWorkplanForSession(options) {
 
   try {
     const updatedEvents = sessionStore.readEvents(sessionDir);
-    const started = updatedEvents.find((event) => event.type === "session_started");
+
     const brief = buildWorkplanBrief(updatedEvents, {
       transcriptPath: path.join(sessionDir, "transcript.jsonl"),
       maxTranscriptChars: config.council?.max_workplan_transcript_chars || 8000,
@@ -237,4 +262,6 @@ module.exports = {
   buildWorkplanBrief,
   selectWorkplanGenerator,
   generateWorkplanForSession,
+  latestDesignCommit,
+  latestDesignFile,
 };

@@ -13,6 +13,12 @@ const {
   latestSignalsByAgent,
 } = require("../engine/council");
 const { EVENTS } = require("../engine/events");
+const eventBuilders = require("../engine/events");
+const {
+  buildDesignArtifactPath,
+  parseAskOrDraft,
+  summarizeDesignForBrief,
+} = require("../engine/design-council");
 
 const prompts = require("../engine/prompts");
 const { buildWorkplanBrief, parseWorkplanJson, validateWorkplan, generateWorkplanForSession } = require("../engine/workplan");
@@ -93,7 +99,7 @@ function pass() {
   process.stderr.write("ok\n");
 }
 
-async function runEngine(config, scenarios) {
+async function runEngine(config, scenarios, options = {}) {
   const store = new SessionStore(testDir);
   const session = store.createSession("test topic");
   const fakeRuntime = makeFakeRuntime(scenarios);
@@ -106,6 +112,9 @@ async function runEngine(config, scenarios) {
     prompts,
     sessionDir: session.dir,
     sessionId: session.id,
+    mode: options.mode || "council",
+    brainstorming: options.brainstorming,
+    runGit: options.runGit,
   });
 
   const events = [];
@@ -116,6 +125,156 @@ async function runEngine(config, scenarios) {
 }
 
 // --- Test Cases ---
+
+async function testDesignCouncilPureHelpers() {
+  setupTest("design council pure helpers");
+
+  const artifactPath = buildDesignArtifactPath(testDir, "Design Council Workflow!");
+  assert.match(artifactPath, /docs[\\/]designs[\\/]\d{4}-\d{2}-\d{2}-design-council-workflow\.md$/);
+
+  const ask = parseAskOrDraft(JSON.stringify({
+    decision: "ask_user",
+    question: "主要使用者是谁？",
+    reason: "需要确定目标用户。",
+    known_context: ["需要替代 open council"],
+    missing_context: ["目标用户"],
+  }));
+  assert.equal(ask.ok, true);
+  assert.equal(ask.value.decision, "ask_user");
+  assert.equal(ask.value.question, "主要使用者是谁？");
+
+  const draft = parseAskOrDraft("```json\n{\"decision\":\"draft_design\",\"reason\":\"信息足够\",\"known_context\":[],\"missing_context\":[]}\n```");
+  assert.equal(draft.ok, true);
+  assert.equal(draft.value.decision, "draft_design");
+
+  const multiQuestion = parseAskOrDraft("{\"decision\":\"ask_user\",\"question\":\"问题一？问题二？\",\"reason\":\"best effort\",\"known_context\":[],\"missing_context\":[]}");
+  assert.equal(multiQuestion.ok, true);
+
+  const summary = summarizeDesignForBrief("# Title\n\n" + "a".repeat(3000), 120);
+  assert.ok(summary.length <= 160);
+  assert.match(summary, /clipped/i);
+
+  const event = eventBuilders.brainstormingQuestionCreated("s1", 1, "brainstorming", 2, "codex", "主要使用者是谁？", "reason", [], ["目标用户"]);
+  assert.equal(event.type, eventBuilders.EVENTS.BRAINSTORMING_QUESTION_CREATED);
+  assert.equal(event.question_seq, 2);
+
+  teardownTest();
+  pass();
+}
+
+async function testDesignCouncilSessionStartedConfig() {
+  setupTest("design council session_started config");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.design_council = { lead_agent: "claude", max_questions: 5 };
+  config.council.min_distinct_agents = 1;
+  config.council.max_turns = 1;
+
+  const { events } = await runEngine(config, [
+    {
+      match: (p) => p.includes("brainstorming") || p.includes("ask_or_draft"),
+      response: { ok: true, text: JSON.stringify({ decision: "ask_user", question: "主要使用者是谁？", reason: "需要澄清目标用户。", known_context: [], missing_context: ["目标用户"] }) },
+    },
+  ], { mode: "design_council" });
+
+  const started = events.find((e) => e.type === EVENTS.SESSION_STARTED);
+  assert.equal(started.mode, "design_council");
+  assert.equal(started.phase, "brainstorming");
+  assert.equal(started.config.brainstorming.lead_agent, "claude");
+  assert.equal(started.config.brainstorming.max_questions, 5);
+
+  teardownTest();
+  pass();
+}
+
+async function testRequiredAgentValidation() {
+  setupTest("required agent validation");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.design_council = { lead_agent: "missing-agent", max_questions: 5 };
+
+  assert.throws(() => CouncilEngine.validateRequiredAgents(config, { mode: "design_council" }), /missing-agent/);
+
+  teardownTest();
+  pass();
+}
+
+async function testBrainstormingAskUserWaitsForAnswer() {
+  setupTest("brainstorming ask_user waits for answer");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.design_council = { lead_agent: "codex", max_questions: 8 };
+
+  const { events, result, store, session } = await runEngine(config, [
+    {
+      match: (p) => p.includes("brainstorming") || p.includes("一次只问一个问题"),
+      response: { ok: true, text: JSON.stringify({ decision: "ask_user", question: "主要使用者是谁？", reason: "需要澄清目标用户。", known_context: [], missing_context: ["目标用户"] }) },
+    },
+  ], { mode: "design_council" });
+
+  assert.equal(result.outcome, "waiting_for_user");
+  assert.ok(events.some((e) => e.type === EVENTS.BRAINSTORMING_STARTED));
+  const question = events.find((e) => e.type === EVENTS.BRAINSTORMING_QUESTION_CREATED);
+  assert.equal(question.question_seq, 1);
+  assert.equal(question.agent, "codex");
+
+  const state = store.deriveState(session.dir);
+  assert.equal(state.status, "waiting_for_user");
+  assert.equal(state.waiting_for, "brainstorming_answer");
+  assert.equal(state.brainstorming.question_count, 1);
+
+  teardownTest();
+  pass();
+}
+
+async function testBrainstormingAnswerResumesIntoCouncilReview() {
+  setupTest("brainstorming answer resumes into council review");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.design_council = { lead_agent: "codex", max_questions: 8 };
+  config.council.min_distinct_agents = 1;
+  config.council.max_turns = 1;
+
+  let askCount = 0;
+  let routeSawDesign = false;
+  const { engine, events } = await runEngine(config, [
+    {
+      match: (p) => p.includes("brainstorming") || p.includes("一次只问一个问题"),
+      response: () => {
+        askCount++;
+        if (askCount === 1) {
+          return { ok: true, text: JSON.stringify({ decision: "ask_user", question: "主要使用者是谁？", reason: "需要澄清目标用户。", known_context: [], missing_context: ["目标用户"] }) };
+        }
+        return { ok: true, text: JSON.stringify({ decision: "draft_design", reason: "用户已回答目标用户。", known_context: ["主要使用者是项目 owner"], missing_context: [] }) };
+      },
+    },
+    { match: (p) => p.includes("Markdown design doc"), response: { ok: true, text: "# Test Design\n\n## Goal\n\nBuild it.\n" } },
+    {
+      match: isRoutePrompt,
+      response: (prompt) => {
+        routeSawDesign = prompt.includes("Design artifact") && prompt.includes("abc1234");
+        return { ok: true, text: JSON.stringify({ decision: "continue", next_agent: "claude", role: "reviewer", reason: "review committed design" }) };
+      },
+    },
+    { match: isAgentTurnPrompt, response: { ok: true, text: JSON.stringify({ stance: "agree", confidence: "high", finalize_readiness: "ready", blockers: [], agreements: ["Design is reviewable."], disagreements: [], recommended_next_step: "finalize", analysis: "Review complete." }) } },
+    { match: isDecidePrompt, response: { ok: true, text: JSON.stringify({ decision: "finalize", next_agent: null, role: null, reason: "done" }) } },
+    { match: isFinalizePrompt, response: { ok: true, text: JSON.stringify({ consensus: "Design reviewed.", disagreements: "none", recommended_next_step: "generate workplan", needs_confirmation: false, next_steps: ["generate workplan"] }) } },
+  ], {
+    mode: "design_council",
+    runGit: async (args) => args[0] === "rev-parse" ? { ok: true, text: "abc1234\n" } : { ok: true, text: "" },
+  });
+
+  engine.addBrainstormingAnswer("主要使用者是项目 owner。");
+  const resumed = await engine.resumeDesignCouncil("test topic");
+
+  assert.equal(resumed.outcome, "discussion_only");
+  assert.equal(routeSawDesign, true);
+  assert.ok(events.some((e) => e.type === EVENTS.DESIGN_COMMIT_CREATED));
+  assert.ok(events.some((e) => e.type === EVENTS.AGENT_TURN_COMPLETED));
+
+  teardownTest();
+  pass();
+}
 
 async function testHappyPathSingleAgent() {
   setupTest("happy path single agent");
@@ -1443,11 +1602,167 @@ async function testSignalBlockSurvivesTranscriptBudget() {
   pass();
 }
 
+async function testDesignRevisionCommittedAfterReview() {
+  setupTest("design revision committed after review");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.design_council = { lead_agent: "codex", max_questions: 8 };
+  config.council.min_distinct_agents = 1;
+  config.council.max_turns = 1;
+
+  let revParseCount = 0;
+  const { events } = await runEngine(config, [
+    { match: (p) => p.includes("brainstorming") || p.includes("一次只问一个问题"), response: { ok: true, text: JSON.stringify({ decision: "draft_design", reason: "ok", known_context: [], missing_context: [] }) } },
+    { match: (p) => p.includes("Markdown design doc"), response: { ok: true, text: "# Test Design\n\n## Goal\n\nBuild it.\n" } },
+    { match: isRoutePrompt, response: { ok: true, text: JSON.stringify({ decision: "continue", next_agent: "claude", role: "reviewer", reason: "review" }) } },
+    { match: isAgentTurnPrompt, response: { ok: true, text: JSON.stringify({ stance: "mixed", confidence: "high", finalize_readiness: "not_ready", blockers: [{ type: "issue", text: "Need explicit API behavior." }], agreements: [], disagreements: ["API behavior missing."], recommended_next_step: "revise design", analysis: "The design needs explicit API behavior." }) } },
+    { match: (p) => p.includes("Revise the Markdown design doc"), response: { ok: true, text: "# Test Design\n\n## Goal\n\nBuild it.\n\n## API behavior\n\nUse /brainstorming/answer.\n" } },
+    { match: isDecidePrompt, response: { ok: true, text: JSON.stringify({ decision: "finalize", next_agent: null, role: null, reason: "revision done" }) } },
+    { match: isFinalizePrompt, response: { ok: true, text: JSON.stringify({ consensus: "Design revised.", disagreements: "none", recommended_next_step: "generate workplan", needs_confirmation: false, next_steps: ["generate workplan"] }) } },
+  ], {
+    mode: "design_council",
+    runGit: async (args) => {
+      if (args[0] === "rev-parse") {
+        revParseCount++;
+        return { ok: true, text: revParseCount === 1 ? "abc1234\n" : "def5678\n" };
+      }
+      return { ok: true, text: "" };
+    },
+  });
+
+  assert.ok(events.some((e) => e.type === EVENTS.DESIGN_REVISION_WRITTEN));
+  const committed = events.find((e) => e.type === EVENTS.DESIGN_REVISION_COMMITTED);
+  assert.equal(committed.source_commit, "abc1234");
+  assert.equal(committed.commit, "def5678");
+
+  teardownTest();
+  pass();
+}
+
+async function testDesignCouncilWorkplanRequiresDesignCommit() {
+  setupTest("design council workplan requires design commit");
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("design without commit");
+  store.appendEvent(session.dir, {
+    schema_version: 1,
+    seq: 0,
+    type: EVENTS.SESSION_STARTED,
+    phase: "brainstorming",
+    session_id: session.id,
+    started_at: new Date().toISOString(),
+    topic: "x",
+    mode: "design_council",
+    config: {},
+  });
+  store.appendEvent(session.dir, {
+    schema_version: 1,
+    seq: 1,
+    type: EVENTS.SESSION_FINISHED,
+    phase: "finalized",
+    session_id: session.id,
+    finished_at: new Date().toISOString(),
+    outcome: "discussion_only",
+    duration_ms: 1,
+    turn_count: 0,
+    distinct_agents: [],
+    error_count: 0,
+  });
+
+  const result = await generateWorkplanForSession({
+    config: MINIMAL_CONFIG,
+    sessionStore: store,
+    sessionDir: session.dir,
+    sessionId: session.id,
+    prompts,
+    runAgent: async () => ({ ok: true, text: "{}" }),
+    onEvent: (event) => store.appendEvent(session.dir, event),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 409);
+  assert.match(result.error, /design commit/i);
+
+  teardownTest();
+  pass();
+}
+
+async function testPreludeErrorEmitsSessionFinished() {
+  setupTest("prelude error emits session_error + session_finished");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.design_council = { lead_agent: "codex", max_questions: 8 };
+
+  const { events, result, store, session } = await runEngine(config, [
+    {
+      match: (p) => p.includes("brainstorming") || p.includes("ask_or_draft"),
+      response: { ok: false, error: "CLI crash" },
+    },
+  ], { mode: "design_council" });
+
+  assert.equal(result.outcome, "error");
+  assert.ok(events.some((e) => e.type === EVENTS.SESSION_ERROR), "should emit session_error");
+  const finished = events.find((e) => e.type === EVENTS.SESSION_FINISHED);
+  assert.ok(finished, "should emit session_finished");
+  assert.equal(finished.outcome, "error");
+
+  const state = store.deriveState(session.dir);
+  assert.equal(state.status, "error");
+
+  teardownTest();
+  pass();
+}
+
+async function testDeriveStateExposesModeAndDesignStatus() {
+  setupTest("deriveState exposes mode and design status for server preflight");
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("design no commit");
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 0,
+    type: EVENTS.SESSION_STARTED,
+    phase: "brainstorming",
+    session_id: session.id,
+    started_at: new Date().toISOString(),
+    topic: "test design",
+    mode: "design_council",
+    config: {},
+  });
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 1,
+    type: EVENTS.SESSION_FINISHED,
+    phase: "finalized",
+    session_id: session.id,
+    finished_at: new Date().toISOString(),
+    outcome: "discussion_only",
+    duration_ms: 1,
+    turn_count: 0,
+    distinct_agents: [],
+    error_count: 0,
+  });
+
+  const state = store.deriveState(session.dir);
+  assert.equal(state.mode, "design_council");
+  assert.equal(state.design.status, "none");
+
+  teardownTest();
+  pass();
+}
+
 // --- Main ---
 
 async function main() {
   process.stderr.write("\nCouncil Smoke Tests\n\n");
 
+  await testDesignCouncilPureHelpers();
+  await testDesignCouncilSessionStartedConfig();
+  await testRequiredAgentValidation();
+  await testBrainstormingAskUserWaitsForAnswer();
+  await testBrainstormingAnswerResumesIntoCouncilReview();
+  await testDesignRevisionCommittedAfterReview();
+  await testDesignCouncilWorkplanRequiresDesignCommit();
+  await testPreludeErrorEmitsSessionFinished();
+  await testDeriveStateExposesModeAndDesignStatus();
   await testWorkbenchEventConstants();
   await testWorkplanEventConstants();
   await testWorkbenchStateAndTranscriptEvents();

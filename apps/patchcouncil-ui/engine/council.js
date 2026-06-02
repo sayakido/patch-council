@@ -242,6 +242,26 @@ function selectCoordinator(config) {
   return first ? { name: first[0], config: first[1] } : null;
 }
 
+function resolveDesignCouncilConfig(config, requested = {}) {
+  const defaults = Object.assign({ lead_agent: "codex", max_questions: 8 }, config.design_council || {});
+  const merged = Object.assign({}, defaults, requested || {});
+  return {
+    lead_agent: merged.lead_agent,
+    max_questions: Math.max(1, Number(merged.max_questions || 8)),
+  };
+}
+
+function validateRequiredAgents(config, options = {}) {
+  const agents = availableAgents(config.agents);
+  const coordinator = selectCoordinator(config);
+  if (!coordinator) throw new Error("coordinator agent is not available");
+  if (options.mode === "design_council") {
+    const dc = resolveDesignCouncilConfig(config, options.brainstorming);
+    if (!agents[dc.lead_agent]) throw new Error(`design council lead agent is not available: ${dc.lead_agent}`);
+  }
+  return true;
+}
+
 function collectContext(projectRoot, config) {
   const ctxCfg = config.context || {};
   const parts = [];
@@ -284,12 +304,21 @@ class CouncilEngine extends EventEmitter {
     this.sessionId = options.sessionId;
     this.sourceMetadata = options.sourceMetadata || null;
 
+    // mode and brainstorming config
+    this.mode = options.mode || "council";
+    this.brainstormingConfig = Object.assign(
+      {},
+      options.config?.design_council || {},
+      options.brainstorming || {}
+    );
+    this.runGit = options.runGit;
+
     // per-run state
     this.seq = -1;
     this.turnCount = 0;
     this.spokenAgents = new Set();
     this.eventLog = [];
-    this.phase = "discussion";
+    this.phase = this.mode === "design_council" ? "brainstorming" : "discussion";
     this.errorCount = 0;
     this.startedAt = null;
 
@@ -297,6 +326,7 @@ class CouncilEngine extends EventEmitter {
     this.cancelRequested = false;
     this.cancelReason = null;
     this.interjections = [];
+    this.waitingForUser = false;
 
     // finalize gate state
     this.finalizeGateOverrideCount = 0;
@@ -335,30 +365,32 @@ class CouncilEngine extends EventEmitter {
     });
   }
 
+  resolveCouncilLimits() {
+    const council = this.config.council || {};
+    return {
+      maxContextChars: council.max_context_chars || 2500,
+      maxTranscriptChars: council.max_transcript_chars || 2500,
+      maxMessageChars: council.max_message_chars || 800,
+    };
+  }
+
   async run(topic) {
     this.startedAt = new Date().toISOString();
     const councilCfg = this.config.council || {};
     const maxTurns = councilCfg.max_turns ?? 3;
     const minDistinctAgents = councilCfg.min_distinct_agents ?? 2;
-    const maxContextChars = councilCfg.max_context_chars ?? 2500;
-    const maxTranscriptChars = councilCfg.max_transcript_chars ?? 2500;
-    const maxMessageChars = councilCfg.max_message_chars ?? 800;
+    const limits = this.resolveCouncilLimits();
+    const { maxContextChars, maxTranscriptChars, maxMessageChars } = limits;
     const agents = availableAgents(this.config.agents);
     const coordinator = selectCoordinator(this.config);
 
-    const context = collectContext(this.projectRoot, this.config);
-    const agentProfiles = formatAgentProfiles(this.config);
+    const designCouncilConfig = this.mode === "design_council"
+      ? resolveDesignCouncilConfig(this.config, this.brainstormingConfig)
+      : null;
 
-    const sourceContext = this.sourceMetadata
-      ? "### Source session\n\n" + this.sourceMetadata.source_summary + "\n\nTranscript: " + this.sourceMetadata.source_transcript_path
-      : "";
-    const contextWithSource = [sourceContext, context].filter(Boolean).join("\n\n");
-
-    // emit session_started
-    const sessionConfigSnapshot = {
-      council: councilCfg,
-      agents: Object.fromEntries(
-        Object.entries(agents).map(([id, cfg]) => [
+    const sanitizeAgentConfig = (agentMap) => {
+      return Object.fromEntries(
+        Object.entries(agentMap).map(([id, cfg]) => [
           id,
           {
             command: cfg.command,
@@ -371,24 +403,77 @@ class CouncilEngine extends EventEmitter {
             roles: id === coordinator?.name ? ["coordinator", "agent"] : ["agent"],
           },
         ])
-      ),
+      );
     };
 
+    const context = collectContext(this.projectRoot, this.config);
+
+    // emit session_started
     this.emitEvent(events.EVENTS.SESSION_STARTED, {
       started_at: this.startedAt,
       topic,
-      mode: "council",
+      mode: this.mode,
       ...(this.sourceMetadata ? {
         source_session_id: this.sourceMetadata.source_session_id,
         source_summary: this.sourceMetadata.source_summary,
         source_transcript_path: this.sourceMetadata.source_transcript_path,
       } : {}),
-      config: sessionConfigSnapshot,
+      config: {
+        council: councilCfg,
+        agents: sanitizeAgentConfig(agents),
+        brainstorming: designCouncilConfig,
+      },
       capabilities: { can_execute: false, requires_user_confirmation_before_write: true },
       agents: Object.entries(agents).map(([id, cfg]) => ({ id, command: cfg.command, roles: id === coordinator?.name ? ["coordinator", "agent"] : ["agent"] })),
     });
 
-    const limits = { maxContextChars, maxTranscriptChars, maxMessageChars };
+    if (this.mode === "design_council") {
+      const preludeResult = await this.runBrainstormingPrelude(topic, context, limits, designCouncilConfig);
+      if (preludeResult.waiting) {
+        this.waitingForUser = true;
+        return { outcome: "waiting_for_user", turnCount: this.turnCount, errorCount: this.errorCount };
+      }
+      if (preludeResult.error) {
+        this.emitEvent(events.EVENTS.SESSION_ERROR, {
+          message: "Brainstorming prelude failed",
+          recoverable: false,
+          action: "abort",
+          details: {},
+        });
+        this.errorCount++;
+        const finishedAt = new Date().toISOString();
+        const durationMs = new Date(finishedAt) - new Date(this.startedAt);
+        this.phase = "finalized";
+        this.emitEvent(events.EVENTS.SESSION_FINISHED, {
+          finished_at: finishedAt,
+          outcome: "error",
+          duration_ms: durationMs,
+          turn_count: this.turnCount,
+          distinct_agents: [...this.spokenAgents],
+          error_count: this.errorCount,
+        });
+        this.sessionStore.deriveState(this.sessionDir);
+        this.sessionStore.generateTranscript(this.sessionDir);
+        return { outcome: "error", turnCount: this.turnCount, errorCount: this.errorCount };
+      }
+    }
+
+    return await this.runDiscussionLoop(topic);
+  }
+
+  async runDiscussionLoop(topic) {
+    const limits = this.resolveCouncilLimits();
+    const councilCfg = this.config.council || {};
+    const maxTurns = councilCfg.max_turns ?? 3;
+    const minDistinctAgents = councilCfg.min_distinct_agents ?? 2;
+    const agents = availableAgents(this.config.agents);
+    const context = collectContext(this.projectRoot, this.config);
+    const agentProfiles = formatAgentProfiles(this.config);
+    const sourceContext = this.sourceMetadata
+      ? "### Source session\n\n" + this.sourceMetadata.source_summary + "\n\nTranscript: " + this.sourceMetadata.source_transcript_path
+      : "";
+    const contextWithSource = [sourceContext, context].filter(Boolean).join("\n\n");
+
     let decision = null;
 
     try {
@@ -402,64 +487,73 @@ class CouncilEngine extends EventEmitter {
       // --- cancellation checkpoint after route ---
       if (this.cancelRequested) {
         // route returned but we were cancelled; skip all agent turns
-        // (fall through to the finalize block below)
       } else {
 
         // --- agent turn loop ---
         while (decision && decision.decision === "continue" && this.turnCount < maxTurns) {
-        const agentName = resolveAgentName(agents, decision.next_agent);
-        if (!agentName) {
-          this.emitEvent(events.EVENTS.COORDINATOR_ERROR, {
-            turn: this.turnCount + 1,
-            message: `Unknown agent: ${decision.next_agent}`,
-            recoverable: true,
-            action: "fallback_finalize",
-            details: { requested: decision.next_agent, available: Object.keys(agents) },
-          });
-          this.errorCount++;
-          break;
+          const agentName = resolveAgentName(agents, decision.next_agent);
+          if (!agentName) {
+            this.emitEvent(events.EVENTS.COORDINATOR_ERROR, {
+              turn: this.turnCount + 1,
+              message: `Unknown agent: ${decision.next_agent}`,
+              recoverable: true,
+              action: "fallback_finalize",
+              details: { requested: decision.next_agent, available: Object.keys(agents) },
+            });
+            this.errorCount++;
+            break;
+          }
+
+          const agentConfig = agents[agentName];
+          const turnNum = this.turnCount + 1;
+
+          const turnResult = await this.runAgentTurn(turnNum, agentName, agentConfig, decision.role, topic, contextWithSource, limits);
+          this.turnCount++;
+          this.spokenAgents.add(agentName);
+
+          // --- design revision trigger ---
+          if (this.mode === "design_council" && turnResult && turnResult.event) {
+            const reviewEvent = turnResult.event;
+            const signal = reviewEvent.signal;
+            const hasBlocker = signal && Array.isArray(signal.blockers) && signal.blockers.length > 0;
+            const recommendRevise = signal && typeof signal.recommended_next_step === "string" && /revise/i.test(signal.recommended_next_step);
+            if (hasBlocker || recommendRevise) {
+              await this.reviseDesignFromLatestReview(topic, reviewEvent);
+            }
+          }
+
+          if (this.turnCount >= maxTurns) break;
+
+          // --- cancellation checkpoint ---
+          if (this.cancelRequested) break;
+
+          // --- decide ---
+          const decideResult = await this.decideCoordinator(topic, contextWithSource, agentProfiles, limits, maxTurns);
+          if (!decideResult) {
+            break;
+          }
+          decision = decideResult;
+
+          // --- policy check ---
+          const enforced = this.enforceMinDistinctAgents(
+            decision, agents, minDistinctAgents, maxTurns
+          );
+          if (enforced !== decision) {
+            this.emitEvent(events.EVENTS.POLICY_OVERRIDE, {
+              turn: this.turnCount,
+              policy: "min_distinct_agents",
+              original_decision: decision.decision,
+              new_decision: enforced.decision,
+              selected_agent: enforced.next_agent,
+              reason: `min_distinct_agents=${minDistinctAgents} 未满足，且尚未达到 max_turns=${maxTurns}`,
+            });
+            decision = enforced;
+          }
+
+          // --- finalize gate ---
+          decision = this.applyFinalizeGate(decision, agents, minDistinctAgents, maxTurns);
+          if (decision && decision.decision === "finalize") break;
         }
-
-        const agentConfig = agents[agentName];
-        const turnNum = this.turnCount + 1;
-
-        await this.runAgentTurn(turnNum, agentName, agentConfig, decision.role, topic, contextWithSource, limits);
-        this.turnCount++;
-        this.spokenAgents.add(agentName);
-
-        if (this.turnCount >= maxTurns) break;
-
-        // --- cancellation checkpoint ---
-        if (this.cancelRequested) break;
-
-        // --- decide ---
-        const decideResult = await this.decideCoordinator(topic, contextWithSource, agentProfiles, limits, maxTurns);
-        if (!decideResult) {
-          // JSON parse failure, already emitted coordinator_error, break to finalize
-          break;
-        }
-        decision = decideResult;
-
-        // --- policy check ---
-        const enforced = this.enforceMinDistinctAgents(
-          decision, agents, minDistinctAgents, maxTurns
-        );
-        if (enforced !== decision) {
-          this.emitEvent(events.EVENTS.POLICY_OVERRIDE, {
-            turn: this.turnCount,
-            policy: "min_distinct_agents",
-            original_decision: decision.decision,
-            new_decision: enforced.decision,
-            selected_agent: enforced.next_agent,
-            reason: `min_distinct_agents=${minDistinctAgents} 未满足，且尚未达到 max_turns=${maxTurns}`,
-          });
-          decision = enforced;
-        }
-
-        // --- finalize gate ---
-        decision = this.applyFinalizeGate(decision, agents, minDistinctAgents, maxTurns);
-        if (decision && decision.decision === "finalize") break;
-      }
       }
     } catch (err) {
       this.emitEvent(events.EVENTS.SESSION_ERROR, {
@@ -512,6 +606,247 @@ class CouncilEngine extends EventEmitter {
     };
   }
 
+  buildBrainstormingBrief(topic) {
+    const parts = [`Topic: ${topic}`];
+    const questions = new Map(
+      this.eventLog
+        .filter((e) => e.type === events.EVENTS.BRAINSTORMING_QUESTION_CREATED)
+        .map((e) => [e.question_seq, e])
+    );
+    const answers = this.eventLog.filter((e) => e.type === events.EVENTS.BRAINSTORMING_ANSWER_RECEIVED);
+    for (const answer of answers) {
+      const question = questions.get(answer.question_seq);
+      parts.push(`Q${answer.question_seq}: ${question?.question || "(question unavailable)"}\nAnswer: ${answer.content}`);
+    }
+    return clipText(parts.join("\n\n"), 3000);
+  }
+
+  nextQuestionSeq() {
+    const seen = this.eventLog.filter((e) => e.type === events.EVENTS.BRAINSTORMING_QUESTION_CREATED);
+    return seen.length + 1;
+  }
+
+  nextDesignRevision() {
+    return this.eventLog.filter((e) => e.type === events.EVENTS.DESIGN_REVISION_WRITTEN).length + 1;
+  }
+
+  async runBrainstormingPrelude(topic, context, limits, designCouncilConfig) {
+    this.emitEvent(events.EVENTS.BRAINSTORMING_STARTED, {
+      lead_agent: designCouncilConfig.lead_agent,
+      skill_id: "brainstorming_prelude",
+      max_questions: designCouncilConfig.max_questions,
+    });
+
+    const agents = availableAgents(this.config.agents);
+    const lead = agents[designCouncilConfig.lead_agent];
+    const brief = this.buildBrainstormingBrief(topic);
+    const prompt = this.prompts.renderPrompt("brainstorming_ask_or_draft.md", { topic, brief });
+    const result = await this.runAgent(designCouncilConfig.lead_agent, lead, prompt);
+    if (!result.ok) {
+      this.errorCount++;
+      this.emitEvent(events.EVENTS.COORDINATOR_ERROR, {
+        turn: null,
+        message: result.error || "brainstorming ask_or_draft failed",
+        recoverable: true,
+        action: "retry",
+        details: {},
+      });
+      return { waiting: false, error: true };
+    }
+
+    const parsed = require("./design-council").parseAskOrDraft(result.text);
+    if (!parsed.ok) {
+      this.errorCount++;
+      this.emitEvent(events.EVENTS.COORDINATOR_ERROR, {
+        turn: null,
+        message: parsed.error,
+        recoverable: true,
+        action: "retry",
+        details: { raw: String(result.text || "").slice(0, 500) },
+      });
+      return { waiting: false, error: true };
+    }
+
+    let decision = parsed;
+
+    if (decision.value.decision === "ask_user") {
+      if (this.nextQuestionSeq() > designCouncilConfig.max_questions) {
+        // max questions exceeded — force draft
+        const forceBrief = this.buildBrainstormingBrief(topic) +
+          "\n\n**IMPORTANT:** You have reached the maximum number of clarification questions. You MUST produce a design draft now.";
+        const forcePrompt = this.prompts.renderPrompt("brainstorming_ask_or_draft.md", { topic, brief: forceBrief });
+        const forceResult = await this.runAgent(designCouncilConfig.lead_agent, lead, forcePrompt);
+        if (!forceResult.ok) {
+          this.errorCount++;
+          this.emitEvent(events.EVENTS.COORDINATOR_ERROR, {
+            turn: null,
+            message: forceResult.error || "forced draft after max questions failed",
+            recoverable: true,
+            action: "retry",
+            details: {},
+          });
+          return { waiting: false, error: true };
+        }
+        const forceParsed = require("./design-council").parseAskOrDraft(forceResult.text);
+        if (!forceParsed.ok) {
+          this.errorCount++;
+          this.emitEvent(events.EVENTS.COORDINATOR_ERROR, {
+            turn: null,
+            message: forceParsed.error,
+            recoverable: true,
+            action: "retry",
+            details: { raw: String(forceResult.text || "").slice(0, 500) },
+          });
+          return { waiting: false, error: true };
+        }
+        decision = forceParsed;
+        // fall through to draft_design below
+      } else {
+        const questionSeq = this.nextQuestionSeq();
+        this.emitEvent(events.EVENTS.BRAINSTORMING_QUESTION_CREATED, {
+          question_seq: questionSeq,
+          agent: designCouncilConfig.lead_agent,
+          question: decision.value.question,
+          reason: decision.value.reason,
+          known_context: decision.value.known_context,
+          missing_context: decision.value.missing_context,
+        });
+        return { waiting: true };
+      }
+    }
+
+    // draft_design — create design draft and commit
+    const draftResult = await this.createDesignDraft(topic, designCouncilConfig, decision.value);
+    if (!draftResult.ok) {
+      return { waiting: false, error: true };
+    }
+    this.emitEvent(events.EVENTS.PHASE_TRANSITION, {
+      from: "brainstorming",
+      to: "discussion",
+      trigger: "design_commit_created",
+      reason: "Design draft committed; entering council review.",
+    });
+    this.phase = "discussion";
+    return { waiting: false, draft: true };
+  }
+
+  addBrainstormingAnswer(content) {
+    const text = String(content || "").trim();
+    if (!text) return null;
+    const latestQuestion = [...this.eventLog].reverse().find((e) => e.type === events.EVENTS.BRAINSTORMING_QUESTION_CREATED);
+    if (!latestQuestion) return null;
+    return this.emitEvent(events.EVENTS.BRAINSTORMING_ANSWER_RECEIVED, {
+      question_seq: latestQuestion.question_seq,
+      content: text,
+    });
+  }
+
+  async resumeDesignCouncil(topic) {
+    this.waitingForUser = false;
+    const limits = this.resolveCouncilLimits();
+    const designCouncilConfig = resolveDesignCouncilConfig(this.config, this.brainstormingConfig);
+    const preludeResult = await this.runBrainstormingPrelude(topic, {}, limits, designCouncilConfig);
+    if (preludeResult.waiting) {
+      this.waitingForUser = true;
+      return { outcome: "waiting_for_user", turnCount: this.turnCount, errorCount: this.errorCount };
+    }
+    return await this.runDiscussionLoop(topic);
+  }
+
+  async createDesignDraft(topic, designCouncilConfig, draftDecision) {
+    const design = require("./design-council");
+    const artifactPath = design.buildDesignArtifactPath(this.projectRoot, topic);
+    const brief = this.buildBrainstormingBrief(topic);
+    const draftContext = [
+      `Reason: ${draftDecision?.reason || ""}`,
+      `Known context: ${(draftDecision?.known_context || []).join("; ")}`,
+      `Missing context: ${(draftDecision?.missing_context || []).join("; ")}`,
+    ].join("\n");
+    const prompt = this.prompts.renderPrompt("design_draft.md", { topic, brief, draft_context: draftContext });
+    const agents = availableAgents(this.config.agents);
+    const result = await this.runAgent(designCouncilConfig.lead_agent, agents[designCouncilConfig.lead_agent], prompt);
+    if (!result.ok) throw new Error(result.error || "design draft failed");
+
+    design.ensureDesignDirectory(artifactPath);
+    fs.writeFileSync(artifactPath, String(result.text || "").trim() + "\n", "utf8");
+    this.emitEvent(events.EVENTS.DESIGN_FILE_WRITTEN, {
+      artifact_path: artifactPath,
+      generator: designCouncilConfig.lead_agent,
+      title: topic,
+      revision: 0,
+    });
+
+    const message = `docs: draft ${design.slugifyDesignTopic(topic)} design`;
+    const committed = await design.commitDesignArtifact({
+      artifactPath,
+      projectRoot: this.projectRoot,
+      message,
+      runGit: this.runGit,
+    });
+    if (!committed.ok) {
+      this.emitEvent(events.EVENTS.DESIGN_COMMIT_FAILED, {
+        artifact_path: artifactPath,
+        revision: 0,
+        stage: committed.stage,
+        error: committed.error,
+      });
+      return { ok: false };
+    }
+    this.emitEvent(events.EVENTS.DESIGN_COMMIT_CREATED, {
+      artifact_path: artifactPath,
+      commit: committed.commit,
+      commit_message: message,
+    });
+    return { ok: true, artifactPath, commit: committed.commit };
+  }
+
+  async reviseDesignFromLatestReview(topic, reviewEvent) {
+    const design = require("./design-council");
+    const latestFile = [...this.eventLog].reverse().find((e) => e.type === events.EVENTS.DESIGN_FILE_WRITTEN || e.type === events.EVENTS.DESIGN_REVISION_WRITTEN);
+    const latestCommit = [...this.eventLog].reverse().find((e) => e.type === events.EVENTS.DESIGN_REVISION_COMMITTED || e.type === events.EVENTS.DESIGN_COMMIT_CREATED);
+    if (!latestFile || !latestCommit) return null;
+
+    const dc = resolveDesignCouncilConfig(this.config, this.brainstormingConfig);
+    const agents = availableAgents(this.config.agents);
+    const currentDesign = fs.readFileSync(latestFile.artifact_path, "utf8");
+    const findings = [
+      reviewEvent.content || "",
+      reviewEvent.signal ? JSON.stringify(reviewEvent.signal, null, 2) : "",
+    ].filter(Boolean).join("\n\n");
+    const prompt = this.prompts.renderPrompt("design_revision.md", { design: currentDesign, findings });
+    const result = await this.runAgent(dc.lead_agent, agents[dc.lead_agent], prompt);
+    if (!result.ok) return null;
+
+    const revision = this.nextDesignRevision();
+    fs.writeFileSync(latestFile.artifact_path, String(result.text || "").trim() + "\n", "utf8");
+    this.emitEvent(events.EVENTS.DESIGN_REVISION_WRITTEN, {
+      artifact_path: latestFile.artifact_path,
+      source_commit: latestCommit.commit,
+      source_review_seq: reviewEvent.seq,
+      generator: dc.lead_agent,
+      revision,
+    });
+
+    const message = `docs: revise ${design.slugifyDesignTopic(topic)} design`;
+    const committed = await design.commitDesignArtifact({ artifactPath: latestFile.artifact_path, projectRoot: this.projectRoot, message, runGit: this.runGit });
+    if (!committed.ok) {
+      this.emitEvent(events.EVENTS.DESIGN_COMMIT_FAILED, {
+        artifact_path: latestFile.artifact_path,
+        revision,
+        stage: committed.stage,
+        error: committed.error,
+      });
+      return null;
+    }
+    this.emitEvent(events.EVENTS.DESIGN_REVISION_COMMITTED, {
+      artifact_path: latestFile.artifact_path,
+      source_commit: latestCommit.commit,
+      commit: committed.commit,
+      commit_message: message,
+    });
+    return committed.commit;
+  }
+
   async routeCoordinator(topic, context, agentProfiles, limits) {
     const coordinator = selectCoordinator(this.config);
     if (!coordinator) {
@@ -531,7 +866,7 @@ class CouncilEngine extends EventEmitter {
       purpose: "route",
     });
 
-    const brief = this.buildBrief(topic, context, limits, []);
+    const brief = this.buildBrief(topic, context, limits, this.eventLog);
     const prompt = this.prompts.renderPrompt("council_route.md", {
       agent_profiles: agentProfiles,
       topic,
@@ -638,7 +973,7 @@ class CouncilEngine extends EventEmitter {
       signalParseError = parsedSignal.error;
     }
 
-    this.emitEvent(events.EVENTS.AGENT_TURN_COMPLETED, {
+    const completedEvent = this.emitEvent(events.EVENTS.AGENT_TURN_COMPLETED, {
       turn: turnNum,
       agent: agentName,
       content,
@@ -647,6 +982,7 @@ class CouncilEngine extends EventEmitter {
       signal,
       ...(signalParseError ? { signal_parse_error: signalParseError } : {}),
     });
+    return { ok: true, event: completedEvent };
   }
 
   async decideCoordinator(topic, context, agentProfiles, limits, maxTurns) {
@@ -773,6 +1109,29 @@ class CouncilEngine extends EventEmitter {
     }
 
     const recentMessages = [];
+
+    // Inject design block for design_council mode
+    const latestDesign = [...log].reverse().find((e) => e.type === events.EVENTS.DESIGN_REVISION_COMMITTED || e.type === events.EVENTS.DESIGN_COMMIT_CREATED);
+    const latestFile = [...log].reverse().find((e) => e.type === events.EVENTS.DESIGN_REVISION_WRITTEN || e.type === events.EVENTS.DESIGN_FILE_WRITTEN);
+    if (this.mode === "design_council" && latestFile) {
+      let designSummary = "";
+      try {
+        const designText = fs.readFileSync(latestFile.artifact_path, "utf8");
+        designSummary = require("./design-council").summarizeDesignForBrief(designText, this.config.council?.max_design_brief_chars || 1800);
+      } catch (_) {
+        designSummary = "Design file could not be read; use artifact path.";
+      }
+      recentMessages.unshift([
+        "### Design artifact",
+        `Path: ${latestFile.artifact_path}`,
+        `Commit: ${latestDesign?.commit || "none"}`,
+        "",
+        designSummary,
+        "",
+        "Council task: review, challenge, and constructively improve the design document. Do not generate an implementation plan.",
+      ].join("\n"));
+    }
+
     const recent = log.slice(-6);
     for (const event of recent) {
       if (event.type === "agent_turn_completed") {
@@ -899,4 +1258,5 @@ class CouncilEngine extends EventEmitter {
   }
 }
 
-module.exports = { CouncilEngine, parseJsonDecision, parseAgentTurnSignal, fallbackAgentSignal, latestSignalsByAgent, shouldAllowFinalize, resolveAgentName, clipText, formatAgentProfiles, selectCoordinator, collectContext, availableAgents };
+module.exports = { CouncilEngine, parseJsonDecision, parseAgentTurnSignal, fallbackAgentSignal, latestSignalsByAgent, shouldAllowFinalize, resolveAgentName, clipText, formatAgentProfiles, selectCoordinator, collectContext, availableAgents, resolveDesignCouncilConfig, validateRequiredAgents };
+CouncilEngine.validateRequiredAgents = validateRequiredAgents;

@@ -38,13 +38,18 @@ Council loop 由 coordinator 驱动：
 
 ```text
 用户主题
+-> [mode=design_council 时] brainstorming prelude → design draft → commit
+-> [mode=design_council 时] phase_transition brainstorming→discussion
 -> coordinator route prompt
 -> 被选中的 AI agent 发言
 -> coordinator decision prompt
 -> 策略检查（min_distinct_agents、finalize gate、max_turns）
+-> [mode=design_council 且有 blocker] design revision
 -> 重复，直到收束或达到最大轮数
 -> coordinator finalization prompt
 ```
+
+`mode=design_council` starts with a single-agent brainstorming prelude, writes `docs/designs/...md`, commits it, then reuses the existing council loop for review.
 
 coordinator 负责：
 
@@ -181,6 +186,9 @@ council_route.md
 council_agent_turn.md
 council_decide.md
 council_finalize.md
+brainstorming_ask_or_draft.md
+design_draft.md
+design_revision.md
 ```
 
 ## 策略层

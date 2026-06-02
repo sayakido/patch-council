@@ -20,6 +20,14 @@ const EVENTS = {
   WORKPLAN_GENERATION_STARTED: "workplan_generation_started",
   WORKPLAN_CREATED: "workplan_created",
   WORKPLAN_GENERATION_FAILED: "workplan_generation_failed",
+  BRAINSTORMING_STARTED: "brainstorming_started",
+  BRAINSTORMING_QUESTION_CREATED: "brainstorming_question_created",
+  BRAINSTORMING_ANSWER_RECEIVED: "brainstorming_answer_received",
+  DESIGN_FILE_WRITTEN: "design_file_written",
+  DESIGN_COMMIT_CREATED: "design_commit_created",
+  DESIGN_COMMIT_FAILED: "design_commit_failed",
+  DESIGN_REVISION_WRITTEN: "design_revision_written",
+  DESIGN_REVISION_COMMITTED: "design_revision_committed",
 };
 
 function baseEvent(sessionId, seq, type, phase) {
@@ -174,6 +182,77 @@ function workplanGenerationFailed(sessionId, seq, phase, failedAt, generator, me
   });
 }
 
+function brainstormingStarted(sessionId, seq, phase, leadAgent, skillId, maxQuestions) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.BRAINSTORMING_STARTED, phase), {
+    lead_agent: leadAgent,
+    skill_id: skillId,
+    max_questions: maxQuestions,
+  });
+}
+
+function brainstormingQuestionCreated(sessionId, seq, phase, questionSeq, agent, question, reason, knownContext, missingContext) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.BRAINSTORMING_QUESTION_CREATED, phase), {
+    question_seq: questionSeq,
+    agent,
+    question,
+    reason,
+    known_context: knownContext || [],
+    missing_context: missingContext || [],
+  });
+}
+
+function brainstormingAnswerReceived(sessionId, seq, phase, questionSeq, content) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.BRAINSTORMING_ANSWER_RECEIVED, phase), {
+    question_seq: questionSeq,
+    content,
+  });
+}
+
+function designFileWritten(sessionId, seq, phase, artifactPath, generator, title, revision) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.DESIGN_FILE_WRITTEN, phase), {
+    artifact_path: artifactPath,
+    generator,
+    title,
+    revision,
+  });
+}
+
+function designCommitCreated(sessionId, seq, phase, artifactPath, commit, commitMessage) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.DESIGN_COMMIT_CREATED, phase), {
+    artifact_path: artifactPath,
+    commit,
+    commit_message: commitMessage,
+  });
+}
+
+function designCommitFailed(sessionId, seq, phase, artifactPath, revision, stage, error) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.DESIGN_COMMIT_FAILED, phase), {
+    artifact_path: artifactPath,
+    revision,
+    stage,
+    error,
+  });
+}
+
+function designRevisionWritten(sessionId, seq, phase, artifactPath, sourceCommit, sourceReviewSeq, generator, revision) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.DESIGN_REVISION_WRITTEN, phase), {
+    artifact_path: artifactPath,
+    source_commit: sourceCommit,
+    source_review_seq: sourceReviewSeq,
+    generator,
+    revision,
+  });
+}
+
+function designRevisionCommitted(sessionId, seq, phase, artifactPath, sourceCommit, commit, commitMessage) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.DESIGN_REVISION_COMMITTED, phase), {
+    artifact_path: artifactPath,
+    source_commit: sourceCommit,
+    commit,
+    commit_message: commitMessage,
+  });
+}
+
 module.exports = {
   EVENTS,
   baseEvent,
@@ -196,4 +275,12 @@ module.exports = {
   workplanGenerationStarted,
   workplanCreated,
   workplanGenerationFailed,
+  brainstormingStarted,
+  brainstormingQuestionCreated,
+  brainstormingAnswerReceived,
+  designFileWritten,
+  designCommitCreated,
+  designCommitFailed,
+  designRevisionWritten,
+  designRevisionCommitted,
 };

@@ -216,6 +216,7 @@ debug 模式可以选择持久化。
 建议 phase 值：
 
 ```text
+brainstorming
 discussion
 task_assignment
 execution
@@ -226,9 +227,12 @@ finalized
 当前实现主要使用：
 
 ```text
+brainstorming
 discussion
 finalized
 ```
+
+`brainstorming` 仅在 `mode=design_council` 时出现。它表示 session 在生成 design draft 之前的单 agent 探索阶段。brainstorming 结束后通过 `phase_transition` 进入 `discussion`。
 
 注意：
 
@@ -261,6 +265,14 @@ session_error
 workplan_generation_started
 workplan_created
 workplan_generation_failed
+brainstorming_started
+brainstorming_question_created
+brainstorming_answer_received
+design_file_written
+design_commit_created
+design_commit_failed
+design_revision_written
+design_revision_committed
 ```
 
 ## Workplan events
@@ -675,6 +687,142 @@ cancelled
 
 Workplan 是 discussion 结束后的派生产物，不修正 `session_finished.outcome`。调用方应通过派生状态里的 `has_workplan` 和 `workplan_status` 判断计划产物状态。
 
+## Design Council 事件
+
+`mode=design_council` 在标准 council 流程前增加 brainstorming prelude。brainstorming 阶段由单个 lead agent 询问澄清问题，产出 git-backed design 文档，然后通过 `phase_transition` 进入 `discussion` 进行 council 审查。
+
+### brainstorming_started
+
+表示 brainstorming prelude 开始。
+
+```json
+{
+  "type": "brainstorming_started",
+  "phase": "brainstorming",
+  "lead_agent": "codex",
+  "skill_id": "brainstorming_prelude",
+  "max_questions": 8
+}
+```
+
+### brainstorming_question_created
+
+Lead agent 提出一个澄清问题。使用 `question_seq` 而非 `turn`，避免与 council discussion turns 混淆。
+
+```json
+{
+  "type": "brainstorming_question_created",
+  "phase": "brainstorming",
+  "question_seq": 1,
+  "agent": "codex",
+  "question": "主要使用者是谁？",
+  "reason": "需要确定目标用户。",
+  "known_context": [],
+  "missing_context": ["目标用户"]
+}
+```
+
+### brainstorming_answer_received
+
+Host 回答了 brainstorming question。
+
+```json
+{
+  "type": "brainstorming_answer_received",
+  "phase": "brainstorming",
+  "question_seq": 1,
+  "content": "Web UI 是主要交互界面。"
+}
+```
+
+### design_file_written
+
+Design artifact 已写入文件系统。写入和 git commit 是两个独立事件。
+
+```json
+{
+  "type": "design_file_written",
+  "phase": "brainstorming",
+  "artifact_path": "docs/designs/2026-06-01-topic.md",
+  "generator": "codex",
+  "title": "topic",
+  "revision": 0
+}
+```
+
+### design_commit_created
+
+Design artifact 已通过 git commit。commit 只 stage 设计文件。
+
+```json
+{
+  "type": "design_commit_created",
+  "phase": "brainstorming",
+  "artifact_path": "docs/designs/2026-06-01-topic.md",
+  "commit": "abc1234",
+  "commit_message": "docs: draft topic design"
+}
+```
+
+### design_commit_failed
+
+Design commit 尝试失败。
+
+```json
+{
+  "type": "design_commit_failed",
+  "phase": "brainstorming",
+  "artifact_path": "docs/designs/2026-06-01-topic.md",
+  "revision": 0,
+  "stage": "commit",
+  "error": "git commit failed"
+}
+```
+
+### design_revision_written / design_revision_committed
+
+Reviewer 反馈后的 revision。`source_commit` 记录被修订的 commit。
+
+```json
+{
+  "type": "design_revision_written",
+  "artifact_path": "docs/designs/2026-06-01-topic.md",
+  "source_commit": "abc1234",
+  "source_review_seq": 12,
+  "generator": "codex",
+  "revision": 1
+}
+```
+
+```json
+{
+  "type": "design_revision_committed",
+  "artifact_path": "docs/designs/2026-06-01-topic.md",
+  "source_commit": "abc1234",
+  "commit": "def5678",
+  "commit_message": "docs: revise topic design"
+}
+```
+
+### 派生状态中的 design
+
+```json
+{
+  "design": {
+    "artifact_path": "docs/designs/2026-06-01-topic.md",
+    "draft_commit": "abc1234",
+    "latest_commit": "def5678",
+    "status": "revision_committed"
+  }
+}
+```
+
+`status` 取值：`none`、`file_written`、`revision_written`、`draft_committed`、`revision_committed`、`commit_failed`。
+
+### waiting_for_user 状态
+
+当存在未回答的 brainstorming question 时，`status` 应被设为 `waiting_for_user`，`waiting_for` 设为 `"brainstorming_answer"`。engine 暂停，等待 Host 通过 `/brainstorming/answer` API 提交回答，然后 resume。
+
 ## 错误事件
 
 错误必须是一等事件，不能只依赖异常日志。
@@ -823,11 +971,14 @@ aictl session status <id>
 
 ```text
 running
+waiting_for_user
 cancelling
 done
 error
 cancelled
 ```
+
+`waiting_for_user` 表示 engine 需要 Host 输入才可继续。当前仅 `mode=design_council` 在 brainstorming 阶段出现此状态。
 
 `workplan_status` 建议取值：
 

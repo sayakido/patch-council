@@ -2,6 +2,8 @@
 
 你的任务是阅读用户主题、项目上下文和当前 transcript，然后决定下一位应该发言的 agent。当前阶段只讨论，不编辑文件。
 
+If the brief says this is a design council, route reviewers to review / challenge / constructively improve the design document. Do not restart requirements elicitation unless a blocker requires user input. Do not generate an implementation plan.
+
 可选 agent：
 {{ agent_profiles }}
 

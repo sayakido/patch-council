@@ -172,3 +172,171 @@ const state = {
 
 writeSession("mock-council-001", state, events);
 console.log(`wrote mock session ${path.join(sessionRoot, "mock-council-001")}`);
+
+// --- Design council mock session ---
+const dcEvents = [
+  {
+    ...baseEvent(0, "session_started", "brainstorming"),
+    started_at: "2026-06-01T10:00:00+08:00",
+    topic: "为 PatchCouncil 设计新的事件管线",
+    mode: "design_council",
+    config: {},
+    capabilities: {},
+    agents: [
+      { id: "codex", command: "codex", roles: ["coordinator", "agent"] },
+      { id: "claude", command: "claude", roles: ["agent"] },
+    ],
+  },
+  {
+    ...baseEvent(1, "brainstorming_started", "brainstorming"),
+    lead_agent: "codex",
+    skill_id: "brainstorming_prelude",
+    max_questions: 8,
+  },
+  {
+    ...baseEvent(2, "brainstorming_question_created", "brainstorming"),
+    question_seq: 1,
+    agent: "codex",
+    question: "事件管线的主要使用者是 CLI 还是 Web UI？",
+    reason: "需要确定目标用户。",
+    known_context: [],
+    missing_context: ["目标用户"],
+  },
+  {
+    ...baseEvent(3, "brainstorming_answer_received", "brainstorming"),
+    question_seq: 1,
+    content: "Web UI 是主要交互界面，CLI 用于自动化。",
+  },
+  {
+    ...baseEvent(4, "brainstorming_question_created", "brainstorming"),
+    question_seq: 2,
+    agent: "codex",
+    question: "需要支持实时推送还是轮询即可？",
+    reason: "影响架构选择。",
+    known_context: ["Web UI 是主要交互界面"],
+    missing_context: ["实时性需求"],
+  },
+  {
+    ...baseEvent(5, "brainstorming_answer_received", "brainstorming"),
+    question_seq: 2,
+    content: "轮询足够，不需要 WebSocket。",
+  },
+  {
+    ...baseEvent(6, "design_file_written", "brainstorming"),
+    artifact_path: "docs/designs/2026-06-01-event-pipeline.md",
+    generator: "codex",
+    title: "为 PatchCouncil 设计新的事件管线",
+    revision: 0,
+  },
+  {
+    ...baseEvent(7, "design_commit_created", "brainstorming"),
+    artifact_path: "docs/designs/2026-06-01-event-pipeline.md",
+    commit: "abc1234",
+    commit_message: "docs: draft event-pipeline design",
+  },
+  {
+    ...baseEvent(8, "phase_transition", "brainstorming"),
+    from: "brainstorming",
+    to: "discussion",
+    trigger: "design_commit_created",
+    reason: "Design draft committed; entering council review.",
+  },
+  {
+    ...baseEvent(9, "coordinator_turn_started", "discussion"),
+    turn: 0,
+    coordinator: "codex",
+    purpose: "route",
+  },
+  {
+    ...baseEvent(10, "coordinator_decided", "discussion"),
+    turn: 0,
+    coordinator: "codex",
+    decision: "continue",
+    next_agent: "claude",
+    role: "reviewer",
+    reason: "review committed design",
+  },
+  {
+    ...baseEvent(11, "agent_turn_started", "discussion"),
+    turn: 1,
+    agent: "claude",
+    role: "reviewer",
+    selected_by: "coordinator",
+  },
+  {
+    ...baseEvent(12, "agent_turn_completed", "discussion"),
+    turn: 1,
+    agent: "claude",
+    content: "事件管线设计方向正确，但缺少错误处理流程和重试机制。",
+    signal: {
+      stance: "mixed",
+      confidence: "medium",
+      finalize_readiness: "not_ready",
+      blockers: [{ type: "issue", text: "Need error handling flow." }],
+      agreements: ["Event schema is clean."],
+      disagreements: ["Missing error handling."],
+      recommended_next_step: "revise design with error handling",
+    },
+  },
+  {
+    ...baseEvent(13, "design_revision_written", "discussion"),
+    artifact_path: "docs/designs/2026-06-01-event-pipeline.md",
+    source_commit: "abc1234",
+    source_review_seq: 12,
+    generator: "codex",
+    revision: 1,
+  },
+  {
+    ...baseEvent(14, "design_revision_committed", "discussion"),
+    artifact_path: "docs/designs/2026-06-01-event-pipeline.md",
+    source_commit: "abc1234",
+    commit: "def5678",
+    commit_message: "docs: revise event-pipeline design",
+  },
+  {
+    ...baseEvent(15, "finalization_started", "discussion"),
+    turn_count: 1,
+  },
+  {
+    ...baseEvent(16, "finalized", "discussion"),
+    summary: "事件管线设计审查完成。核心决策：使用 JSONL 事件流 + 轮询，支持 schema 版本化。",
+    next_steps: ["generate workplan", "实现事件管线"],
+  },
+  {
+    ...baseEvent(17, "session_finished", "finalized"),
+    finished_at: "2026-06-01T10:15:00+08:00",
+    outcome: "discussion_only",
+    duration_ms: 900000,
+    turn_count: 1,
+    distinct_agents: ["claude"],
+    error_count: 0,
+  },
+];
+
+const dcState = {
+  session_id: "mock-design-council-002",
+  status: "done",
+  phase: "finalized",
+  topic: "为 PatchCouncil 设计新的事件管线",
+  started_at: "2026-06-01T10:00:00+08:00",
+  finished_at: "2026-06-01T10:15:00+08:00",
+  turn_count: 1,
+  distinct_agents: ["claude"],
+  last_seq: 17,
+  outcome: "discussion_only",
+  error_count: 0,
+  waiting_for: null,
+  brainstorming: {
+    question_count: 2,
+    lead_agent: "codex",
+  },
+  design: {
+    artifact_path: "docs/designs/2026-06-01-event-pipeline.md",
+    draft_commit: "abc1234",
+    latest_commit: "def5678",
+    status: "revision_committed",
+  },
+};
+
+writeSession("mock-design-council-002", dcState, dcEvents);
+console.log(`wrote mock session ${path.join(sessionRoot, "mock-design-council-002")}`);

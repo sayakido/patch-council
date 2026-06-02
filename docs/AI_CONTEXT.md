@@ -36,6 +36,7 @@ npm run start
 ## Council 模型
 
 - `aictl council "主题"` 会启动一个只读的多 agent 讨论。
+- `mode=design_council` starts with a single-agent brainstorming prelude, writes `docs/designs/...md`, commits it, then reuses the existing council loop for review.
 - coordinator 负责判断下一轮应该由哪个 AI 发言。
 - agent 发言顺序是动态的，不再硬编码为固定顺序。
 - 每轮 agent 发言后，coordinator 判断继续讨论还是收束。
@@ -46,8 +47,12 @@ npm run start
 
 ```text
 用户主题
+-> [mode=design_council 时] brainstorming prelude（单 agent 澄清提问）
+-> [mode=design_council 时] 生成并 commit design draft
+-> [mode=design_council 时] phase_transition brainstorming→discussion
 -> coordinator route（选择第一个 agent）
 -> 被选中的 AI agent 发言
+-> [mode=design_council 且有 blocker] 触发 design revision
 -> coordinator decide，判断继续或收束
 -> 策略检查（min_distinct_agents、finalize gate、max_turns）
 -> 可选的下一轮 AI agent 发言
@@ -104,6 +109,9 @@ council_route.md
 council_agent_turn.md
 council_decide.md
 council_finalize.md
+brainstorming_ask_or_draft.md
+design_draft.md
+design_revision.md
 ```
 
 ## 当前策略和限制

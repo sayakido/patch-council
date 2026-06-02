@@ -74,6 +74,22 @@ function projectEvent(event) {
         text: (event.original_decision || "") + " → " + (event.new_decision || "") + ": " + (event.reason || ""),
         agent: null,
       };
+    case "brainstorming_started":
+      return { kind: "system", speaker: "Brainstorming", text: "Lead: " + (event.lead_agent || "") + " · Max questions: " + (event.max_questions || ""), agent: null };
+    case "brainstorming_question_created":
+      return { kind: "agent", speaker: event.agent || "codex", text: event.question, agent: event.agent, meta: "Question " + event.question_seq };
+    case "brainstorming_answer_received":
+      return { kind: "host", speaker: "Host", text: event.content, agent: null, meta: "Answer " + event.question_seq };
+    case "design_file_written":
+    case "design_revision_written":
+      return { kind: "system", speaker: "Design file", text: (event.artifact_path || "") + "\nrevision " + (event.revision || 0), agent: null };
+    case "design_commit_created":
+    case "design_revision_committed":
+      return { kind: "system", speaker: "Design commit", text: (event.commit || "") + "\n" + (event.commit_message || ""), agent: null };
+    case "design_commit_failed":
+      return { kind: "error", speaker: "Design commit failed", text: (event.error || "") + " at stage " + (event.stage || ""), agent: null };
+    case "phase_transition":
+      return { kind: "system", speaker: "Phase", text: (event.from || "") + " → " + (event.to || "") + ": " + (event.reason || ""), agent: null };
     case "agent_error":
     case "coordinator_error":
     case "session_error":
@@ -266,7 +282,7 @@ function renderMessage(msg) {
 
   var bubble = document.createElement("div");
   bubble.className = "bubble";
-  bubble.innerHTML = '<div class="bubble-speaker">' + escapeHtml(msg.speaker) + '</div><div class="bubble-text">' + renderMarkdown(msg.text) + '</div>';
+  bubble.innerHTML = '<div class="bubble-speaker">' + escapeHtml(msg.speaker) + '</div>' + (msg.meta ? '<div class="bubble-meta">' + escapeHtml(msg.meta) + '</div>' : '') + '<div class="bubble-text">' + renderMarkdown(msg.text) + '</div>';
 
   if (msg.signal) {
     var meta = document.createElement("div");
@@ -361,6 +377,13 @@ function updateComposer() {
     els.threadBody.append(emptyDiv);
     els.sessionTitle.textContent = "New Council";
     els.phaseBadge.textContent = "idle";
+  } else if (session && session.status === "waiting_for_user") {
+    workspace.className = "workspace running";
+    els.composerInput.placeholder = "回答 brainstorming 问题...";
+    els.composerButton.textContent = "Answer";
+    els.cancelButton.classList.remove("hidden");
+    els.sessionTitle.textContent = session.topic || session.session_id;
+    els.phaseBadge.textContent = session.phase || session.status;
   } else if (session && (session.status === "running" || session.status === "cancelling")) {
     workspace.className = "workspace running";
     els.composerInput.placeholder = "输入插话，下一轮生效...";
@@ -389,6 +412,9 @@ function renderStatus(session, events) {
     ["Turns", String(session ? (session.turn_count || 0) : 0)],
     ["Last seq", String(session ? (session.last_seq ?? "") : "")],
   ];
+  if (session && session.design && session.design.status !== "none") {
+    rows.push(["Design", (session.design.latest_commit || "none") + " · " + (session.design.status || "")]);
+  }
 
   els.statusGrid.replaceChildren.apply(els.statusGrid, rows.flatMap(function (pair) {
     var dt = document.createElement("dt");
@@ -614,6 +640,11 @@ els.composerForm.addEventListener("submit", function (e) {
         els.composerInput.value = "";
         discussionExpanded = false;
         await loadSessions();
+      } else if (session.status === "waiting_for_user" && session.waiting_for === "brainstorming_answer") {
+        // Submit brainstorming answer
+        await postJson("/api/sessions/" + encodeURIComponent(activeSessionId) + "/brainstorming/answer", { content: text });
+        els.composerInput.value = "";
+        await selectSession(activeSessionId);
       } else if (session.status === "running" || session.status === "cancelling") {
         // Add interjection
         await postJson("/api/sessions/" + encodeURIComponent(activeSessionId) + "/interjections", { content: text });

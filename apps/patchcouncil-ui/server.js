@@ -274,14 +274,24 @@ async function handleApi(req, res, parsed) {
       sourceMetadata = new SessionStore(realSessionRoot).getSourceMetadata(sourceDir);
     }
 
+    const config = loadConfig(projectRoot);
+    const mode = String(body.mode || "council");
+    const brainstorming = body.brainstorming && typeof body.brainstorming === "object" ? body.brainstorming : null;
+    try {
+      CouncilEngine.validateRequiredAgents(config, { mode, brainstorming });
+    } catch (error) {
+      sendJson(res, 409, { error: error.message });
+      return true;
+    }
+
     const sessionStore = new SessionStore(realSessionRoot);
     const session = sessionStore.createSession(topic);
-    const config = loadConfig(projectRoot);
 
     const controller = {
       sessionId: session.id,
       sessionDir: session.dir,
       sessionStore,
+      topic,
       engine: null,
       currentRun: null,
     };
@@ -295,6 +305,8 @@ async function handleApi(req, res, parsed) {
       sessionDir: session.dir,
       sessionId: session.id,
       sourceMetadata,
+      mode,
+      brainstorming,
     });
     controller.engine = engine;
 
@@ -315,7 +327,9 @@ async function handleApi(req, res, parsed) {
       } catch (err) {
         console.error(`[patchcouncil-ui] session ${session.id} error:`, err.message);
       } finally {
-        activeSessions.delete(session.id);
+        if (!controller.engine?.waitingForUser) {
+          activeSessions.delete(session.id);
+        }
       }
     });
 
@@ -360,6 +374,37 @@ async function handleApi(req, res, parsed) {
     return true;
   }
 
+  // POST /api/sessions/:id/brainstorming/answer
+  const brainstormingAnswerMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/brainstorming\/answer$/);
+  if (brainstormingAnswerMatch && req.method === "POST") {
+    const sessionId = decodeURIComponent(brainstormingAnswerMatch[1]);
+    const controller = activeSessions.get(sessionId);
+    if (!controller) {
+      sendJson(res, 409, { error: "session is not waiting for brainstorming answer" });
+      return true;
+    }
+    const body = await readJsonBody(req);
+    const event = controller.engine.addBrainstormingAnswer(body.content);
+    if (!event) {
+      sendJson(res, 400, { error: "content is required" });
+      return true;
+    }
+    controller.sessionStore.deriveState(controller.sessionDir);
+    sendJson(res, 202, { event });
+    setImmediate(async () => {
+      try {
+        await controller.engine.resumeDesignCouncil(controller.topic);
+        controller.sessionStore.deriveState(controller.sessionDir);
+        controller.sessionStore.generateTranscript(controller.sessionDir);
+      } catch (err) {
+        console.error(`[patchcouncil-ui] resume ${sessionId} error:`, err.message);
+      } finally {
+        if (!controller.engine?.waitingForUser) activeSessions.delete(sessionId);
+      }
+    });
+    return true;
+  }
+
   // POST /api/sessions/:id/workplan
   const workplanMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/workplan$/);
   if (workplanMatch && req.method === "POST") {
@@ -386,6 +431,10 @@ async function handleApi(req, res, parsed) {
     }
     if (state.has_workplan) {
       sendJson(res, 409, { error: "workplan already exists" });
+      return true;
+    }
+    if (state.mode === "design_council" && state.design?.status !== "draft_committed" && state.design?.status !== "revision_committed") {
+      sendJson(res, 409, { error: "design council workplan requires a design commit" });
       return true;
     }
 
