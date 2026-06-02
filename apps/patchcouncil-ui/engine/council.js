@@ -434,6 +434,26 @@ class CouncilEngine extends EventEmitter {
         return { outcome: "waiting_for_user", turnCount: this.turnCount, errorCount: this.errorCount };
       }
       if (preludeResult.error) {
+        this.emitEvent(events.EVENTS.SESSION_ERROR, {
+          message: "Brainstorming prelude failed",
+          recoverable: false,
+          action: "abort",
+          details: {},
+        });
+        this.errorCount++;
+        const finishedAt = new Date().toISOString();
+        const durationMs = new Date(finishedAt) - new Date(this.startedAt);
+        this.phase = "finalized";
+        this.emitEvent(events.EVENTS.SESSION_FINISHED, {
+          finished_at: finishedAt,
+          outcome: "error",
+          duration_ms: durationMs,
+          turn_count: this.turnCount,
+          distinct_agents: [...this.spokenAgents],
+          error_count: this.errorCount,
+        });
+        this.sessionStore.deriveState(this.sessionDir);
+        this.sessionStore.generateTranscript(this.sessionDir);
         return { outcome: "error", turnCount: this.turnCount, errorCount: this.errorCount };
       }
     }

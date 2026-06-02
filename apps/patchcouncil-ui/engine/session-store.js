@@ -151,6 +151,7 @@ class SessionStore {
       session_id: sessionId,
       status,
       phase,
+      mode: sessionStarted?.mode || "council",
       topic,
       started_at: startedAt,
       finished_at: finishedAt,

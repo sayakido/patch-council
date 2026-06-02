@@ -433,6 +433,10 @@ async function handleApi(req, res, parsed) {
       sendJson(res, 409, { error: "workplan already exists" });
       return true;
     }
+    if (state.mode === "design_council" && state.design?.status !== "draft_committed" && state.design?.status !== "revision_committed") {
+      sendJson(res, 409, { error: "design council workplan requires a design commit" });
+      return true;
+    }
 
     activeWorkplans.add(sessionId);
     sendJson(res, 202, { session_id: sessionId, status: "generating" });
