@@ -433,6 +433,9 @@ class CouncilEngine extends EventEmitter {
         this.waitingForUser = true;
         return { outcome: "waiting_for_user", turnCount: this.turnCount, errorCount: this.errorCount };
       }
+      if (preludeResult.error) {
+        return { outcome: "error", turnCount: this.turnCount, errorCount: this.errorCount };
+      }
     }
 
     return await this.runDiscussionLoop(topic);
@@ -644,21 +647,59 @@ class CouncilEngine extends EventEmitter {
       return { waiting: false, error: true };
     }
 
-    if (parsed.value.decision === "ask_user") {
-      const questionSeq = this.nextQuestionSeq();
-      this.emitEvent(events.EVENTS.BRAINSTORMING_QUESTION_CREATED, {
-        question_seq: questionSeq,
-        agent: designCouncilConfig.lead_agent,
-        question: parsed.value.question,
-        reason: parsed.value.reason,
-        known_context: parsed.value.known_context,
-        missing_context: parsed.value.missing_context,
-      });
-      return { waiting: true };
+    let decision = parsed;
+
+    if (decision.value.decision === "ask_user") {
+      if (this.nextQuestionSeq() > designCouncilConfig.max_questions) {
+        // max questions exceeded — force draft
+        const forceBrief = this.buildBrainstormingBrief(topic) +
+          "\n\n**IMPORTANT:** You have reached the maximum number of clarification questions. You MUST produce a design draft now.";
+        const forcePrompt = this.prompts.renderPrompt("brainstorming_ask_or_draft.md", { topic, brief: forceBrief });
+        const forceResult = await this.runAgent(designCouncilConfig.lead_agent, lead, forcePrompt);
+        if (!forceResult.ok) {
+          this.errorCount++;
+          this.emitEvent(events.EVENTS.COORDINATOR_ERROR, {
+            turn: null,
+            message: forceResult.error || "forced draft after max questions failed",
+            recoverable: true,
+            action: "retry",
+            details: {},
+          });
+          return { waiting: false, error: true };
+        }
+        const forceParsed = require("./design-council").parseAskOrDraft(forceResult.text);
+        if (!forceParsed.ok) {
+          this.errorCount++;
+          this.emitEvent(events.EVENTS.COORDINATOR_ERROR, {
+            turn: null,
+            message: forceParsed.error,
+            recoverable: true,
+            action: "retry",
+            details: { raw: String(forceResult.text || "").slice(0, 500) },
+          });
+          return { waiting: false, error: true };
+        }
+        decision = forceParsed;
+        // fall through to draft_design below
+      } else {
+        const questionSeq = this.nextQuestionSeq();
+        this.emitEvent(events.EVENTS.BRAINSTORMING_QUESTION_CREATED, {
+          question_seq: questionSeq,
+          agent: designCouncilConfig.lead_agent,
+          question: decision.value.question,
+          reason: decision.value.reason,
+          known_context: decision.value.known_context,
+          missing_context: decision.value.missing_context,
+        });
+        return { waiting: true };
+      }
     }
 
     // draft_design — create design draft and commit
-    await this.createDesignDraft(topic, designCouncilConfig, parsed.value);
+    const draftResult = await this.createDesignDraft(topic, designCouncilConfig, decision.value);
+    if (!draftResult.ok) {
+      return { waiting: false, error: true };
+    }
     this.emitEvent(events.EVENTS.PHASE_TRANSITION, {
       from: "brainstorming",
       to: "discussion",
@@ -756,13 +797,14 @@ class CouncilEngine extends EventEmitter {
     const result = await this.runAgent(dc.lead_agent, agents[dc.lead_agent], prompt);
     if (!result.ok) return null;
 
+    const revision = this.nextDesignRevision();
     fs.writeFileSync(latestFile.artifact_path, String(result.text || "").trim() + "\n", "utf8");
     this.emitEvent(events.EVENTS.DESIGN_REVISION_WRITTEN, {
       artifact_path: latestFile.artifact_path,
       source_commit: latestCommit.commit,
       source_review_seq: reviewEvent.seq,
       generator: dc.lead_agent,
-      revision: this.nextDesignRevision(),
+      revision,
     });
 
     const message = `docs: revise ${design.slugifyDesignTopic(topic)} design`;
@@ -770,7 +812,7 @@ class CouncilEngine extends EventEmitter {
     if (!committed.ok) {
       this.emitEvent(events.EVENTS.DESIGN_COMMIT_FAILED, {
         artifact_path: latestFile.artifact_path,
-        revision: this.nextDesignRevision(),
+        revision,
         stage: committed.stage,
         error: committed.error,
       });

@@ -168,6 +168,11 @@ async function generateWorkplanForSession(options) {
     return { ok: false, error: "no available workplan generator", status: 409 };
   }
 
+  const started = allEvents.find((event) => event.type === "session_started");
+  if (started?.mode === "design_council" && !latestDesignCommit(allEvents)) {
+    return { ok: false, error: "design council workplan requires a design commit", status: 409 };
+  }
+
   let seq = nextSeq(allEvents);
   const generatedStartedAt = new Date().toISOString();
   onEvent({
@@ -182,11 +187,6 @@ async function generateWorkplanForSession(options) {
 
   try {
     const updatedEvents = sessionStore.readEvents(sessionDir);
-    const started = updatedEvents.find((event) => event.type === "session_started");
-
-    if (started?.mode === "design_council" && !latestDesignCommit(updatedEvents)) {
-      return { ok: false, error: "design council workplan requires a design commit", status: 409 };
-    }
 
     const brief = buildWorkplanBrief(updatedEvents, {
       transcriptPath: path.join(sessionDir, "transcript.jsonl"),

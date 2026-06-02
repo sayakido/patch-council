@@ -94,7 +94,7 @@ async function commitDesignArtifact(options) {
   const { artifactPath, projectRoot, message, runGit = (args) => runGitCommand(projectRoot, args) } = options;
   const add = await runGit(["add", artifactPath]);
   if (!add.ok) return { ok: false, stage: "add", error: add.error || add.text };
-  const commit = await runGit(["commit", "-m", message]);
+  const commit = await runGit(["commit", "-m", message, "--", artifactPath]);
   if (!commit.ok) return { ok: false, stage: "commit", error: commit.error || commit.text };
   const rev = await runGit(["rev-parse", "--short", "HEAD"]);
   if (!rev.ok) return { ok: false, stage: "rev-parse", error: rev.error || rev.text };
