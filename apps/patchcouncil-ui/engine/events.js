@@ -20,6 +20,20 @@ const EVENTS = {
   WORKPLAN_GENERATION_STARTED: "workplan_generation_started",
   WORKPLAN_CREATED: "workplan_created",
   WORKPLAN_GENERATION_FAILED: "workplan_generation_failed",
+  WORKPLAN_DRAFT_STARTED: "workplan_draft_started",
+  WORKPLAN_DRAFT_WRITTEN: "workplan_draft_written",
+  WORKPLAN_DRAFT_COMMITTED: "workplan_draft_committed",
+  WORKPLAN_DRAFT_COMMIT_FAILED: "workplan_draft_commit_failed",
+  WORKPLAN_REVIEW_STARTED: "workplan_review_started",
+  WORKPLAN_REVIEW_COMPLETED: "workplan_review_completed",
+  WORKPLAN_AUTHOR_RESPONSE_STARTED: "workplan_author_response_started",
+  WORKPLAN_AUTHOR_RESPONSE_COMPLETED: "workplan_author_response_completed",
+  WORKPLAN_REVISION_WRITTEN: "workplan_revision_written",
+  WORKPLAN_REVISION_COMMITTED: "workplan_revision_committed",
+  WORKPLAN_REVISION_COMMIT_FAILED: "workplan_revision_commit_failed",
+  WORKPLAN_APPROVAL_REQUESTED: "workplan_approval_requested",
+  WORKPLAN_APPROVED: "workplan_approved",
+  WORKPLAN_APPROVAL_REJECTED: "workplan_approval_rejected",
   BRAINSTORMING_STARTED: "brainstorming_started",
   BRAINSTORMING_QUESTION_CREATED: "brainstorming_question_created",
   BRAINSTORMING_ANSWER_RECEIVED: "brainstorming_answer_received",
@@ -253,6 +267,138 @@ function designRevisionCommitted(sessionId, seq, phase, artifactPath, sourceComm
   });
 }
 
+function workplanDraftStarted(sessionId, seq, phase, generator, sourceDesignPath, sourceDesignCommit) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_DRAFT_STARTED, phase), {
+    generator,
+    source_design_path: sourceDesignPath,
+    source_design_commit: sourceDesignCommit,
+  });
+}
+
+function workplanDraftWritten(sessionId, seq, phase, artifactPath, generator, sourceDesignCommit, title, revision) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_DRAFT_WRITTEN, phase), {
+    artifact_path: artifactPath,
+    generator,
+    source_design_commit: sourceDesignCommit,
+    title,
+    revision,
+  });
+}
+
+function workplanDraftCommitted(sessionId, seq, phase, artifactPath, sourceDesignCommit, commit, commitMessage) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_DRAFT_COMMITTED, phase), {
+    artifact_path: artifactPath,
+    source_design_commit: sourceDesignCommit,
+    commit,
+    commit_message: commitMessage,
+  });
+}
+
+function workplanDraftCommitFailed(sessionId, seq, phase, artifactPath, sourceDesignCommit, stage, error) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_DRAFT_COMMIT_FAILED, phase), {
+    artifact_path: artifactPath,
+    source_design_commit: sourceDesignCommit,
+    stage,
+    error,
+  });
+}
+
+function workplanReviewStarted(sessionId, seq, phase, artifactPath, workplanCommit, reviewer) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_REVIEW_STARTED, phase), {
+    artifact_path: artifactPath,
+    workplan_commit: workplanCommit,
+    reviewer,
+  });
+}
+
+function workplanReviewCompleted(sessionId, seq, phase, artifactPath, workplanCommit, reviewer, sourceAgentTurnSeq, requiresRevision) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_REVIEW_COMPLETED, phase), {
+    artifact_path: artifactPath,
+    workplan_commit: workplanCommit,
+    reviewer,
+    source_agent_turn_seq: sourceAgentTurnSeq,
+    requires_revision: Boolean(requiresRevision),
+  });
+}
+
+function workplanAuthorResponseStarted(sessionId, seq, phase, artifactPath, workplanCommit, author, sourceReviewSeq) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_AUTHOR_RESPONSE_STARTED, phase), {
+    artifact_path: artifactPath,
+    workplan_commit: workplanCommit,
+    author,
+    source_review_seq: sourceReviewSeq,
+  });
+}
+
+function workplanAuthorResponseCompleted(sessionId, seq, phase, artifactPath, workplanCommit, author, sourceReviewSeq, sourceAgentTurnSeq, decision, revisionRequired) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_AUTHOR_RESPONSE_COMPLETED, phase), {
+    artifact_path: artifactPath,
+    workplan_commit: workplanCommit,
+    author,
+    source_review_seq: sourceReviewSeq,
+    source_agent_turn_seq: sourceAgentTurnSeq,
+    decision,
+    revision_required: Boolean(revisionRequired),
+  });
+}
+
+function workplanRevisionWritten(sessionId, seq, phase, artifactPath, sourceDesignCommit, sourceWorkplanCommit, sourceReviewSeq, generator, revision) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_REVISION_WRITTEN, phase), {
+    artifact_path: artifactPath,
+    source_design_commit: sourceDesignCommit,
+    source_workplan_commit: sourceWorkplanCommit,
+    source_review_seq: sourceReviewSeq,
+    generator,
+    revision,
+  });
+}
+
+function workplanRevisionCommitted(sessionId, seq, phase, artifactPath, sourceDesignCommit, sourceWorkplanCommit, commit, commitMessage) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_REVISION_COMMITTED, phase), {
+    artifact_path: artifactPath,
+    source_design_commit: sourceDesignCommit,
+    source_workplan_commit: sourceWorkplanCommit,
+    commit,
+    commit_message: commitMessage,
+  });
+}
+
+function workplanRevisionCommitFailed(sessionId, seq, phase, artifactPath, sourceDesignCommit, sourceWorkplanCommit, stage, error) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_REVISION_COMMIT_FAILED, phase), {
+    artifact_path: artifactPath,
+    source_design_commit: sourceDesignCommit,
+    source_workplan_commit: sourceWorkplanCommit,
+    stage,
+    error,
+  });
+}
+
+function workplanApprovalRequested(sessionId, seq, phase, artifactPath, workplanCommit, requestedAt) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_APPROVAL_REQUESTED, phase), {
+    artifact_path: artifactPath,
+    workplan_commit: workplanCommit,
+    requested_at: requestedAt,
+  });
+}
+
+function workplanApproved(sessionId, seq, phase, artifactPath, approvedCommit, approvedAt, approvedBy) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_APPROVED, phase), {
+    artifact_path: artifactPath,
+    approved_commit: approvedCommit,
+    approved_at: approvedAt,
+    approved_by: approvedBy,
+  });
+}
+
+function workplanApprovalRejected(sessionId, seq, phase, artifactPath, workplanCommit, rejectedAt, reason) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_APPROVAL_REJECTED, phase), {
+    artifact_path: artifactPath,
+    workplan_commit: workplanCommit,
+    rejected_at: rejectedAt,
+    reason,
+  });
+}
+
 module.exports = {
   EVENTS,
   baseEvent,
@@ -283,4 +429,18 @@ module.exports = {
   designCommitFailed,
   designRevisionWritten,
   designRevisionCommitted,
+  workplanDraftStarted,
+  workplanDraftWritten,
+  workplanDraftCommitted,
+  workplanDraftCommitFailed,
+  workplanReviewStarted,
+  workplanReviewCompleted,
+  workplanAuthorResponseStarted,
+  workplanAuthorResponseCompleted,
+  workplanRevisionWritten,
+  workplanRevisionCommitted,
+  workplanRevisionCommitFailed,
+  workplanApprovalRequested,
+  workplanApproved,
+  workplanApprovalRejected,
 };

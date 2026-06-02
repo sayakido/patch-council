@@ -753,11 +753,26 @@ async function testWorkbenchStateAndTranscriptEvents() {
 }
 
 async function testWorkplanEventConstants() {
-  setupTest("workplan event constants");
+  setupTest("workplan council event constants");
 
   assert.equal(EVENTS.WORKPLAN_GENERATION_STARTED, "workplan_generation_started");
   assert.equal(EVENTS.WORKPLAN_CREATED, "workplan_created");
   assert.equal(EVENTS.WORKPLAN_GENERATION_FAILED, "workplan_generation_failed");
+
+  assert.equal(EVENTS.WORKPLAN_DRAFT_STARTED, "workplan_draft_started");
+  assert.equal(EVENTS.WORKPLAN_DRAFT_WRITTEN, "workplan_draft_written");
+  assert.equal(EVENTS.WORKPLAN_DRAFT_COMMITTED, "workplan_draft_committed");
+  assert.equal(EVENTS.WORKPLAN_DRAFT_COMMIT_FAILED, "workplan_draft_commit_failed");
+  assert.equal(EVENTS.WORKPLAN_REVIEW_STARTED, "workplan_review_started");
+  assert.equal(EVENTS.WORKPLAN_REVIEW_COMPLETED, "workplan_review_completed");
+  assert.equal(EVENTS.WORKPLAN_AUTHOR_RESPONSE_STARTED, "workplan_author_response_started");
+  assert.equal(EVENTS.WORKPLAN_AUTHOR_RESPONSE_COMPLETED, "workplan_author_response_completed");
+  assert.equal(EVENTS.WORKPLAN_REVISION_WRITTEN, "workplan_revision_written");
+  assert.equal(EVENTS.WORKPLAN_REVISION_COMMITTED, "workplan_revision_committed");
+  assert.equal(EVENTS.WORKPLAN_REVISION_COMMIT_FAILED, "workplan_revision_commit_failed");
+  assert.equal(EVENTS.WORKPLAN_APPROVAL_REQUESTED, "workplan_approval_requested");
+  assert.equal(EVENTS.WORKPLAN_APPROVED, "workplan_approved");
+  assert.equal(EVENTS.WORKPLAN_APPROVAL_REJECTED, "workplan_approval_rejected");
 
   teardownTest();
   pass();
