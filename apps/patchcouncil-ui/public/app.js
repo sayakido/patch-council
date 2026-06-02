@@ -122,25 +122,44 @@ function latestEvent(type) {
 }
 
 function workplanState() {
-  var approved = latestEvent("workplan_approved");
-  if (approved) return { status: "approved", event: approved };
-  var rejected = latestEvent("workplan_approval_rejected");
-  if (rejected) return { status: "rejected", event: rejected };
-  var approval = latestEvent("workplan_approval_requested");
-  if (approval) return { status: "awaiting_approval", event: approval };
-  var failed = latestEvent("workplan_generation_failed") || latestEvent("workplan_draft_commit_failed") || latestEvent("workplan_revision_commit_failed");
-  if (failed) return { status: "failed", event: failed };
-  var revision = latestEvent("workplan_revision_committed") || latestEvent("workplan_revision_written");
-  if (revision) return { status: "revising", event: revision };
-  var authorResponse = latestEvent("workplan_author_response_completed") || latestEvent("workplan_author_response_started");
-  if (authorResponse) return { status: "author_responding", event: authorResponse };
-  var review = latestEvent("workplan_review_completed") || latestEvent("workplan_review_started");
-  if (review) return { status: "reviewing", event: review };
-  var draft = latestEvent("workplan_draft_committed") || latestEvent("workplan_draft_written") || latestEvent("workplan_draft_started");
-  if (draft) return { status: "drafting", event: draft };
-  var legacy = latestEvent("workplan_created");
-  if (legacy) return { status: "legacy_json_created", event: legacy };
-  return { status: "none", event: null };
+  // Find the latest workplan-related event by seq so retry after
+  // rejected/failed shows the new state, not the old one.
+  var WORKPLAN_EVENT_TYPES = [
+    "workplan_approved", "workplan_approval_rejected", "workplan_approval_requested",
+    "workplan_generation_failed", "workplan_draft_commit_failed", "workplan_revision_commit_failed",
+    "workplan_revision_committed", "workplan_revision_written",
+    "workplan_author_response_completed", "workplan_author_response_started",
+    "workplan_review_completed", "workplan_review_started",
+    "workplan_draft_committed", "workplan_draft_written", "workplan_draft_started",
+    "workplan_created",
+  ];
+  var latest = null;
+  for (var i = 0; i < _events.length; i++) {
+    if (WORKPLAN_EVENT_TYPES.indexOf(_events[i].type) !== -1) {
+      if (!latest || _events[i].seq > latest.seq) latest = _events[i];
+    }
+  }
+  if (!latest) return { status: "none", event: null };
+
+  var statusByType = {
+    workplan_approved: "approved",
+    workplan_approval_rejected: "rejected",
+    workplan_approval_requested: "awaiting_approval",
+    workplan_generation_failed: "failed",
+    workplan_draft_commit_failed: "failed",
+    workplan_revision_commit_failed: "failed",
+    workplan_revision_committed: "revising",
+    workplan_revision_written: "revising",
+    workplan_author_response_completed: "author_responding",
+    workplan_author_response_started: "author_responding",
+    workplan_review_completed: "reviewing",
+    workplan_review_started: "reviewing",
+    workplan_draft_committed: "drafting",
+    workplan_draft_written: "drafting",
+    workplan_draft_started: "drafting",
+    workplan_created: "legacy_json_created",
+  };
+  return { status: statusByType[latest.type] || "none", event: latest };
 }
 
 function renderWorkplanCard(session) {

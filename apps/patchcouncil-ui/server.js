@@ -473,6 +473,11 @@ async function handleApi(req, res, parsed) {
       sendJson(res, 409, { error: "workplan already exists or is awaiting approval" });
       return true;
     }
+    // Session must be done (or failed/rejected) — engine won't process a running session.
+    if (state.status === "running") {
+      sendJson(res, 409, { error: "session must be done before generating workplan" });
+      return true;
+    }
 
     activeWorkplans.add(sessionId);
     sendJson(res, 202, { session_id: sessionId, status: "generating" });
@@ -480,7 +485,7 @@ async function handleApi(req, res, parsed) {
     const config = loadConfig(projectRoot);
     setImmediate(async () => {
       try {
-        await generateWorkplanForSession({
+        const result = await generateWorkplanForSession({
           config,
           sessionStore,
           sessionDir,
@@ -492,8 +497,41 @@ async function handleApi(req, res, parsed) {
           runAgent: makeRuntimeRunner(projectRoot, { sessionId, sessionDir, currentRun: null }),
           onEvent: (event) => sessionStore.appendEvent(sessionDir, event),
         });
+        if (!result.ok) {
+          // Preflight or internal rejection — write a failure event so UI can see it.
+          sessionStore.appendEvent(sessionDir, {
+            schema_version: 1,
+            seq: (sessionStore.readEvents(sessionDir).length || 0),
+            type: EVENTS.WORKPLAN_GENERATION_FAILED,
+            phase: "finalized",
+            session_id: sessionId,
+            failed_at: new Date().toISOString(),
+            generator: "codex",
+            message: result.error || "workplan generation rejected by preflight",
+            recoverable: result.status !== 409,
+            action: result.status === 409 ? "resolve_preflight" : "retry",
+            details: result,
+          });
+          sessionStore.deriveState(sessionDir);
+          sessionStore.generateTranscript(sessionDir);
+        }
       } catch (error) {
         console.error(`[patchcouncil-ui] workplan ${sessionId} error:`, error.message);
+        sessionStore.appendEvent(sessionDir, {
+          schema_version: 1,
+          seq: (sessionStore.readEvents(sessionDir).length || 0),
+          type: EVENTS.WORKPLAN_GENERATION_FAILED,
+          phase: "finalized",
+          session_id: sessionId,
+          failed_at: new Date().toISOString(),
+          generator: "codex",
+          message: error.message,
+          recoverable: true,
+          action: "retry",
+          details: {},
+        });
+        sessionStore.deriveState(sessionDir);
+        sessionStore.generateTranscript(sessionDir);
       } finally {
         activeWorkplans.delete(sessionId);
       }

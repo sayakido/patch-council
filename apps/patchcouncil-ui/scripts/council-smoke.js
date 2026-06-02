@@ -978,6 +978,7 @@ async function testGenerateMarkdownWorkplanCouncilFlow() {
   config.workplan_council = { min_distinct_reviewers: 1 };
 
   let rev = 0;
+  let reviewCalls = 0;
   const result = await generateWorkplanForSession({
     config,
     sessionStore: store,
@@ -991,10 +992,14 @@ async function testGenerateMarkdownWorkplanCouncilFlow() {
         return { ok: true, text: "# Markdown Workplan Implementation Plan\n\n**Source Design:** docs/designs/2026-06-02-feature.md\n**Source Design Commit:** abc123\n**Goal:** Build it.\n**Architecture:** Small service.\n**Tech Stack:** Node.js\n\n---\n\n## File Structure\n\n- Modify: `apps/patchcouncil-ui/server.js` - API.\n\n### Task 1: API\n\n- [ ] **Step 1: Run check**\n\nRun: `npm run check`\nExpected: PASS\n\n## Self-Review\n\n- Spec coverage: covered\n- Placeholder scan: clean\n- Type / naming consistency: consistent\n- Scope check: scoped\n" };
       }
       if (prompt.includes("reviewing a PatchCouncil Markdown workplan")) {
-        return { ok: true, text: JSON.stringify({ stance: "mixed", confidence: "high", finalize_readiness: "not_ready", blockers: [{ type: "issue", text: "Need smoke verification." }], agreements: [], disagreements: [], recommended_next_step: "revise workplan", analysis: "Add smoke verification." }) };
+        reviewCalls = (reviewCalls || 0) + 1;
+        if (reviewCalls === 1) {
+          return { ok: true, text: JSON.stringify({ stance: "mixed", confidence: "high", finalize_readiness: "not_ready", blockers: [{ type: "issue", text: "Need smoke verification." }], agreements: [], disagreements: [], recommended_next_step: "revise workplan", analysis: "Add smoke verification." }) };
+        }
+        return { ok: true, text: JSON.stringify({ stance: "agree", confidence: "high", finalize_readiness: "ready", blockers: [], agreements: ["Looks good."], disagreements: [], recommended_next_step: "request user approval", analysis: "No issues remain." }) };
       }
       if (prompt.includes("Review the reviewer findings and decide whether to accept")) {
-        return { ok: true, text: JSON.stringify({ decision: "partially_accept", reason: "Smoke verification should be added; existing file scope is already sufficient.", revision_required: true, stance: "mixed", confidence: "high", finalize_readiness: "not_ready", blockers: [{ type: "issue", text: "Need smoke verification." }], agreements: ["Add smoke verification."], disagreements: ["No extra file boundary needed."], recommended_next_step: "revise workplan", analysis: "Accept the verification concern and keep the scope narrow." }) };
+        return { ok: true, text: JSON.stringify({ decision: "partially_accept", reason: "Smoke verification should be added; existing file scope is already sufficient.", revision_required: true, stance: "agree", confidence: "high", finalize_readiness: "ready", blockers: [], agreements: ["Add smoke verification."], disagreements: ["No extra file boundary needed."], recommended_next_step: "revise workplan", analysis: "Accept the verification concern and keep the scope narrow." }) };
       }
       if (prompt.includes("Revise the complete Markdown workplan")) {
         return { ok: true, text: "# Markdown Workplan Implementation Plan\n\n**Source Design:** docs/designs/2026-06-02-feature.md\n**Source Design Commit:** abc123\n**Goal:** Build it.\n**Architecture:** Small service.\n**Tech Stack:** Node.js\n\n---\n\n## File Structure\n\n- Modify: `apps/patchcouncil-ui/server.js` - API.\n\n### Task 1: API\n\n- [ ] **Step 1: Run smoke**\n\nRun: `npm run smoke`\nExpected: PASS\n\n## Self-Review\n\n- Spec coverage: covered\n- Placeholder scan: clean\n- Type / naming consistency: consistent\n- Scope check: scoped\n" };

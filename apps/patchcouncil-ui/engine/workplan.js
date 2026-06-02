@@ -319,6 +319,22 @@ async function runWorkplanReviewLoop(options) {
     currentCommit = committed.commit;
   }
 
+  // Only request approval if the finalize gate actually passed.
+  // If the loop exhausted maxTurns with unresolved blockers or
+  // author rejecting every review, do not ask the user to approve.
+  const finalGate = shouldAllowFinalize(eventLog, { minDistinctAgents: Math.min(minDistinctReviewers, Object.keys(agents).length) });
+  if (!finalGate.allowed) {
+    emit(events.EVENTS.WORKPLAN_GENERATION_FAILED, {
+      failed_at: new Date().toISOString(),
+      generator: author.name,
+      message: finalGate.reason,
+      recoverable: false,
+      action: "review_loop_exhausted",
+      details: { artifact_path: artifactPath, workplan_commit: currentCommit },
+    });
+    return { ok: false, status: 200, error: finalGate.reason };
+  }
+
   emit(events.EVENTS.WORKPLAN_APPROVAL_REQUESTED, {
     artifact_path: artifactPath,
     workplan_commit: currentCommit,
@@ -361,6 +377,13 @@ async function generateWorkplanForSession(options) {
 
   try {
     artifact.ensureWorkplanDirectory(artifactPath);
+    // Allow retry after failed/rejected — clean up the previous artifact file.
+    if (fs.existsSync(artifactPath)) {
+      const state = sessionStore.deriveState(sessionDir);
+      if (state.workplan && (state.workplan.status === "failed" || state.workplan.status === "rejected")) {
+        fs.unlinkSync(artifactPath);
+      }
+    }
     const writable = artifact.assertWorkplanWritable(artifactPath, { allowExisting: false });
     if (!writable.ok) {
       emit(events.EVENTS.WORKPLAN_GENERATION_FAILED, {
