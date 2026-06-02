@@ -1687,6 +1687,68 @@ async function testDesignCouncilWorkplanRequiresDesignCommit() {
   pass();
 }
 
+async function testPreludeErrorEmitsSessionFinished() {
+  setupTest("prelude error emits session_error + session_finished");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.design_council = { lead_agent: "codex", max_questions: 8 };
+
+  const { events, result, store, session } = await runEngine(config, [
+    {
+      match: (p) => p.includes("brainstorming") || p.includes("ask_or_draft"),
+      response: { ok: false, error: "CLI crash" },
+    },
+  ], { mode: "design_council" });
+
+  assert.equal(result.outcome, "error");
+  assert.ok(events.some((e) => e.type === EVENTS.SESSION_ERROR), "should emit session_error");
+  const finished = events.find((e) => e.type === EVENTS.SESSION_FINISHED);
+  assert.ok(finished, "should emit session_finished");
+  assert.equal(finished.outcome, "error");
+
+  const state = store.deriveState(session.dir);
+  assert.equal(state.status, "error");
+
+  teardownTest();
+  pass();
+}
+
+async function testDeriveStateExposesModeAndDesignStatus() {
+  setupTest("deriveState exposes mode and design status for server preflight");
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("design no commit");
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 0,
+    type: EVENTS.SESSION_STARTED,
+    phase: "brainstorming",
+    session_id: session.id,
+    started_at: new Date().toISOString(),
+    topic: "test design",
+    mode: "design_council",
+    config: {},
+  });
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 1,
+    type: EVENTS.SESSION_FINISHED,
+    phase: "finalized",
+    session_id: session.id,
+    finished_at: new Date().toISOString(),
+    outcome: "discussion_only",
+    duration_ms: 1,
+    turn_count: 0,
+    distinct_agents: [],
+    error_count: 0,
+  });
+
+  const state = store.deriveState(session.dir);
+  assert.equal(state.mode, "design_council");
+  assert.equal(state.design.status, "none");
+
+  teardownTest();
+  pass();
+}
+
 // --- Main ---
 
 async function main() {
@@ -1699,6 +1761,8 @@ async function main() {
   await testBrainstormingAnswerResumesIntoCouncilReview();
   await testDesignRevisionCommittedAfterReview();
   await testDesignCouncilWorkplanRequiresDesignCommit();
+  await testPreludeErrorEmitsSessionFinished();
+  await testDeriveStateExposesModeAndDesignStatus();
   await testWorkbenchEventConstants();
   await testWorkplanEventConstants();
   await testWorkbenchStateAndTranscriptEvents();
