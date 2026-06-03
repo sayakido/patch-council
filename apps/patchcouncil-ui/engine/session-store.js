@@ -189,13 +189,28 @@ class SessionStore {
     const latestCommitEvent = [...allEvents].reverse().find((e) => e.type === "design_revision_committed" || e.type === "design_commit_created");
     const latestCommitFailed = [...allEvents].reverse().find((e) => e.type === "design_commit_failed");
 
+    const latestDesignLifecycleEvent = [...allEvents].reverse().find((e) =>
+      e.type === "design_revision_committed" ||
+      e.type === "design_revision_written" ||
+      e.type === "design_author_response_completed" ||
+      e.type === "design_author_response_started" ||
+      e.type === "design_commit_created" ||
+      e.type === "design_file_written" ||
+      e.type === "design_commit_failed"
+    );
+
     let designStatus = "none";
-    if (latestCommitEvent) {
-      designStatus = latestCommitEvent.type === "design_revision_committed" ? "revision_committed" : "draft_committed";
-    } else if (latestCommitFailed) {
-      designStatus = "commit_failed";
-    } else if (designFile) {
-      designStatus = designFile.type === "design_revision_written" ? "revision_written" : "file_written";
+    if (latestDesignLifecycleEvent) {
+      const designStatusByType = {
+        design_file_written: "file_written",
+        design_commit_created: "draft_committed",
+        design_author_response_started: "author_responding",
+        design_author_response_completed: "author_responded",
+        design_revision_written: "revision_written",
+        design_revision_committed: "revision_committed",
+        design_commit_failed: "commit_failed",
+      };
+      designStatus = designStatusByType[latestDesignLifecycleEvent.type] || designStatus;
     }
 
     const state = {
@@ -491,6 +506,26 @@ class SessionStore {
           lines.push(`**Revision:** ${event.revision}`);
           lines.push(`**Stage:** ${event.stage}`);
           lines.push(`**Error:** ${event.error}`);
+          lines.push("");
+          break;
+
+        case "design_author_response_started":
+          lines.push("## Design author response started");
+          lines.push("");
+          lines.push(`**Path:** ${event.artifact_path}`);
+          lines.push(`**Commit:** ${event.design_commit}`);
+          lines.push(`**Author:** ${event.author}`);
+          lines.push("");
+          break;
+
+        case "design_author_response_completed":
+          lines.push("## Design author response completed");
+          lines.push("");
+          lines.push(`**Path:** ${event.artifact_path}`);
+          lines.push(`**Commit:** ${event.design_commit}`);
+          lines.push(`**Author:** ${event.author}`);
+          lines.push(`**Decision:** ${event.decision}`);
+          lines.push(`**Revision required:** ${event.revision_required ? "yes" : "no"}`);
           lines.push("");
           break;
 

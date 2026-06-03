@@ -785,6 +785,16 @@ async function testWorkplanEventConstants() {
   pass();
 }
 
+async function testDesignAuthorResponseEventConstants() {
+  setupTest("design author response event constants");
+
+  assert.equal(EVENTS.DESIGN_AUTHOR_RESPONSE_STARTED, "design_author_response_started");
+  assert.equal(EVENTS.DESIGN_AUTHOR_RESPONSE_COMPLETED, "design_author_response_completed");
+
+  teardownTest();
+  pass();
+}
+
 async function testWorkplanPromptRendersContract() {
   setupTest("workplan prompt renders contract");
 
@@ -1898,6 +1908,47 @@ async function testDesignCouncilWorkplanRequiresDesignCommit() {
   pass();
 }
 
+async function testDesignAuthorResponseDerivesStateAndTranscript() {
+  setupTest("design author response derives state and transcript");
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("design author response");
+  const base = {
+    schema_version: 1,
+    session_id: session.id,
+    phase: "brainstorming",
+  };
+
+  store.appendEvent(session.dir, {
+    ...base,
+    seq: 0,
+    type: EVENTS.SESSION_STARTED,
+    started_at: "2026-06-02T10:00:00+08:00",
+    topic: "design author response",
+    mode: "design_council",
+    config: {},
+    capabilities: {},
+    agents: [],
+  });
+  store.appendEvent(session.dir, { ...base, seq: 1, type: EVENTS.DESIGN_FILE_WRITTEN, artifact_path: "docs/designs/feature.md", generator: "codex", title: "Feature Design", revision: 0 });
+  store.appendEvent(session.dir, { ...base, seq: 2, type: EVENTS.DESIGN_COMMIT_CREATED, artifact_path: "docs/designs/feature.md", commit: "abc123", commit_message: "docs: draft feature design" });
+  store.appendEvent(session.dir, { ...base, seq: 3, type: EVENTS.DESIGN_AUTHOR_RESPONSE_STARTED, artifact_path: "docs/designs/feature.md", design_commit: "abc123", author: "codex", source_review_seq: 10 });
+
+  let state = store.deriveState(session.dir);
+  assert.equal(state.design.status, "author_responding");
+
+  store.appendEvent(session.dir, { ...base, seq: 4, type: EVENTS.DESIGN_AUTHOR_RESPONSE_COMPLETED, artifact_path: "docs/designs/feature.md", design_commit: "abc123", author: "codex", source_review_seq: 10, source_agent_turn_seq: 11, decision: "reject", revision_required: false });
+
+  state = store.deriveState(session.dir);
+  const transcript = store.generateTranscript(session.dir);
+  assert.equal(state.design.status, "author_responded");
+  assert.match(transcript, /Design author response completed/);
+  assert.match(transcript, /reject/);
+
+  teardownTest();
+  pass();
+}
+
 async function testPreludeErrorEmitsSessionFinished() {
   setupTest("prelude error emits session_error + session_finished");
 
@@ -1972,10 +2023,12 @@ async function main() {
   await testBrainstormingAnswerResumesIntoCouncilReview();
   await testDesignRevisionCommittedAfterReview();
   await testDesignCouncilWorkplanRequiresDesignCommit();
+  await testDesignAuthorResponseDerivesStateAndTranscript();
   await testPreludeErrorEmitsSessionFinished();
   await testDeriveStateExposesModeAndDesignStatus();
   await testWorkbenchEventConstants();
   await testWorkplanEventConstants();
+  await testDesignAuthorResponseEventConstants();
   await testWorkbenchStateAndTranscriptEvents();
   await testWorkplanBriefIncludesAllAgentTurns();
   await testWorkplanPromptRendersContract();

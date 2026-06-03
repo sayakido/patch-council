@@ -42,6 +42,8 @@ const EVENTS = {
   DESIGN_COMMIT_FAILED: "design_commit_failed",
   DESIGN_REVISION_WRITTEN: "design_revision_written",
   DESIGN_REVISION_COMMITTED: "design_revision_committed",
+  DESIGN_AUTHOR_RESPONSE_STARTED: "design_author_response_started",
+  DESIGN_AUTHOR_RESPONSE_COMPLETED: "design_author_response_completed",
 };
 
 function baseEvent(sessionId, seq, type, phase) {
@@ -267,6 +269,27 @@ function designRevisionCommitted(sessionId, seq, phase, artifactPath, sourceComm
   });
 }
 
+function designAuthorResponseStarted(sessionId, seq, phase, artifactPath, designCommit, author, sourceReviewSeq) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.DESIGN_AUTHOR_RESPONSE_STARTED, phase), {
+    artifact_path: artifactPath,
+    design_commit: designCommit,
+    author,
+    source_review_seq: sourceReviewSeq,
+  });
+}
+
+function designAuthorResponseCompleted(sessionId, seq, phase, artifactPath, designCommit, author, sourceReviewSeq, sourceAgentTurnSeq, decision, revisionRequired) {
+  return Object.assign(baseEvent(sessionId, seq, EVENTS.DESIGN_AUTHOR_RESPONSE_COMPLETED, phase), {
+    artifact_path: artifactPath,
+    design_commit: designCommit,
+    author,
+    source_review_seq: sourceReviewSeq,
+    source_agent_turn_seq: sourceAgentTurnSeq,
+    decision,
+    revision_required: Boolean(revisionRequired),
+  });
+}
+
 function workplanDraftStarted(sessionId, seq, phase, generator, sourceDesignPath, sourceDesignCommit) {
   return Object.assign(baseEvent(sessionId, seq, EVENTS.WORKPLAN_DRAFT_STARTED, phase), {
     generator,
@@ -429,6 +452,8 @@ module.exports = {
   designCommitFailed,
   designRevisionWritten,
   designRevisionCommitted,
+  designAuthorResponseStarted,
+  designAuthorResponseCompleted,
   workplanDraftStarted,
   workplanDraftWritten,
   workplanDraftCommitted,
