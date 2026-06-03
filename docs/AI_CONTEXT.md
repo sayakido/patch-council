@@ -53,7 +53,8 @@ npm run start
 -> [mode=design_council 时] phase_transition brainstorming→discussion
 -> coordinator route（选择第一个 agent）
 -> 被选中的 AI agent 发言
--> [mode=design_council 且有 blocker] 触发 design revision
+-> [mode=design_council 且 reviewer 有 blocker/revise] 触发 lead author response
+-> [lead accept/partially_accept 且 revision_required] 触发 design revision
 -> coordinator decide，判断继续或收束
 -> 策略检查（min_distinct_agents、finalize gate、max_turns）
 -> 可选的下一轮 AI agent 发言

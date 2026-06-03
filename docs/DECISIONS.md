@@ -66,7 +66,8 @@ Workplan Council v1 仍是 post-discussion artifact lifecycle，所有新 workpl
 -> git commit 第一版 design
 -> phase_transition brainstorming -> discussion
 -> 复用现有 council loop review / challenge / constructive improve design
--> lead agent 根据 blocker 或 revise 建议修订 design 并提交 revision commit
+-> lead agent 先回应 reviewer findings，明确 accept / partially_accept / reject
+-> 只有 accept 或 partially_accept 且需要修订时，lead 才修订 design 并提交 revision commit
 -> finalized
 -> workplan 基于 latest design commit
 ```

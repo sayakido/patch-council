@@ -285,6 +285,8 @@ brainstorming_answer_received
 design_file_written
 design_commit_created
 design_commit_failed
+design_author_response_started
+design_author_response_completed
 design_revision_written
 design_revision_committed
 ```
@@ -948,6 +950,25 @@ Design commit 尝试失败。
 }
 ```
 
+### design_author_response_started / design_author_response_completed
+
+Reviewer 提出 blocker 或 revise 建议后，lead agent 先回应 review，而不是直接静默修改 design。回应会产生一条 `agent_turn_completed(agent=lead_agent, signal=...)`，用于让 coordinator 和 finalize gate 看到 lead 对 review 的采纳、部分采纳或不采纳立场。
+
+```json
+{
+  "type": "design_author_response_completed",
+  "artifact_path": "docs/designs/2026-06-01-topic.md",
+  "design_commit": "abc1234",
+  "author": "codex",
+  "source_review_seq": 5,
+  "source_agent_turn_seq": 7,
+  "decision": "partially_accept",
+  "revision_required": true
+}
+```
+
+`decision` 取值：`accept`、`partially_accept`、`reject`。只有 `accept` 或 `partially_accept` 且 `revision_required: true` 时才触发 design revision。
+
 ### design_revision_written / design_revision_committed
 
 Reviewer 反馈后的 revision。`source_commit` 记录被修订的 commit。
@@ -986,7 +1007,7 @@ Reviewer 反馈后的 revision。`source_commit` 记录被修订的 commit。
 }
 ```
 
-`status` 取值：`none`、`file_written`、`revision_written`、`draft_committed`、`revision_committed`、`commit_failed`。
+`status` 取值：`none`、`file_written`、`draft_committed`、`author_responding`、`author_responded`、`revision_written`、`revision_committed`、`commit_failed`。
 
 ### waiting_for_user 状态
 
@@ -1106,6 +1127,13 @@ workplan_revision_commit_failed
 workplan_approval_requested
 workplan_approved
 workplan_approval_rejected
+design_file_written
+design_commit_created
+design_commit_failed
+design_author_response_started
+design_author_response_completed
+design_revision_written
+design_revision_committed
 agent_error
 coordinator_error
 session_error
