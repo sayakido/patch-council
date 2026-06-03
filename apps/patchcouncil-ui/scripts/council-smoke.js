@@ -881,6 +881,34 @@ async function testWorkplanCouncilPromptsRenderContract() {
   pass();
 }
 
+async function testDesignAuthorResponsePromptsRenderContract() {
+  setupTest("design author response prompts render contract");
+
+  const response = prompts.renderPrompt("design_author_response.md", {
+    source_design_path: "docs/designs/feature.md",
+    source_design_commit: "abc123",
+    design: "# Feature Design",
+    review: "Need explicit API behavior.",
+    signal: JSON.stringify({ recommended_next_step: "revise design" }, null, 2),
+  });
+  assert.match(response, /accept \| partially_accept \| reject/);
+  assert.match(response, /revision_required/);
+  assert.match(response, /Do not modify files/i);
+  assert.match(response, /strict JSON/i);
+
+  const revision = prompts.renderPrompt("design_revision.md", {
+    design: "# Feature Design",
+    findings: "Need explicit API behavior.",
+    author_response: JSON.stringify({ decision: "partially_accept" }, null, 2),
+    author_signal: JSON.stringify({ recommended_next_step: "revise design" }, null, 2),
+  });
+  assert.match(revision, /author response/i);
+  assert.match(revision, /full revised Markdown design/i);
+
+  teardownTest();
+  pass();
+}
+
 async function testWorkplanArtifactHelpers() {
   setupTest("workplan artifact helpers");
 
@@ -2033,6 +2061,7 @@ async function main() {
   await testWorkplanBriefIncludesAllAgentTurns();
   await testWorkplanPromptRendersContract();
   await testWorkplanCouncilPromptsRenderContract();
+  await testDesignAuthorResponsePromptsRenderContract();
   await testWorkplanArtifactHelpers();
   await testGenerateMarkdownWorkplanCouncilFlow();
   await testWorkplanDirtyFailedRetryPreservesUserFile();
