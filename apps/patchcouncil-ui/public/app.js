@@ -500,7 +500,17 @@ function renderStatus(session, events) {
     ["Last seq", String(session ? (session.last_seq ?? "") : "")],
   ];
   if (session && session.design && session.design.status !== "none") {
-    rows.push(["Design", (session.design.latest_commit || "none") + " · " + (session.design.status || "")]);
+    var designStatusLabels = {
+      file_written: "design file written",
+      draft_committed: "design draft committed",
+      author_responding: "lead responding to design review",
+      author_responded: "lead responded to design review",
+      revision_written: "design revision written",
+      revision_committed: "design revision committed",
+      commit_failed: "design commit failed",
+    };
+    var designLabel = designStatusLabels[session.design.status] || session.design.status;
+    rows.push(["Design", (session.design.latest_commit || "none") + " · " + designLabel]);
   }
   if (session && session.workplan && session.workplan.status !== "none") {
     rows.push(["Workplan", (session.workplan.latest_commit || "none") + " · " + (session.workplan.status || "")]);

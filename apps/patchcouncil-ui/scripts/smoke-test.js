@@ -104,6 +104,9 @@ async function main() {
     if (!appJs.includes("signal-meta")) {
       throw new Error("app js missing signal metadata rendering");
     }
+    if (!appJs.includes("lead responding to design review")) {
+      throw new Error("app js missing design author response status");
+    }
 
     // Config page
     var configHtml = await fetchText("/config.html");
@@ -254,6 +257,11 @@ async function main() {
     }
     if (!designState || designState.status !== "done" || !designState.design || !designState.design.latest_commit) {
       throw new Error("design council smoke session did not produce a design commit");
+    }
+
+    var designEvents = await fetchJson(`/api/sessions/${planEncoded}/events`);
+    if (!(designEvents.events || []).some(function (e) { return e.type === "design_author_response_completed"; })) {
+      throw new Error("transcript missing design author response");
     }
 
     const startedWorkplan = await fetchJson(`/api/sessions/${planEncoded}/workplan`, {

@@ -151,6 +151,7 @@ function makeRuntimeRunner(projectRoot, activeSession) {
       }
 
       if (prompt.includes("finalize_readiness") && prompt.includes("blockers") && prompt.includes("analysis")) {
+        var isDesignCouncil = activeSession.engine && activeSession.engine.mode === "design_council";
         return {
           ok: true,
           text: JSON.stringify({
@@ -159,8 +160,8 @@ function makeRuntimeRunner(projectRoot, activeSession) {
             finalize_readiness: "ready",
             blockers: [],
             agreements: ["Fake runtime can provide structured agent signal."],
-            disagreements: [],
-            recommended_next_step: "Finalize when policy allows.",
+            disagreements: isDesignCouncil ? ["Fake design needs explicit API behavior."] : [],
+            recommended_next_step: isDesignCouncil ? "revise design" : "Finalize when policy allows.",
             analysis: `Fake response from ${agentName}: structured signal generated for smoke tests.`,
           }),
         };
