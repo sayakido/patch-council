@@ -1,1 +1,9 @@
-Fake response from codex: received prompt (1202 chars)
+# Smoke Design
+
+## Goal
+
+Verify Workplan Council end-to-end.
+
+## Scope
+
+HTTP API and event flow.
