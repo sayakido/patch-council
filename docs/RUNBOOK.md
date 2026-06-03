@@ -19,7 +19,7 @@ cd apps/patchcouncil-ui
 npm run check
 ```
 
-集成测试（HTTP smoke + 46 council engine 测试）：
+集成测试（HTTP smoke + 48 council engine 测试）：
 
 ```bash
 cd apps/patchcouncil-ui
@@ -148,7 +148,56 @@ design artifact 位于：
 docs/designs/YYYY-MM-DD-<slug>.md
 ```
 
-如果没有 `design_commit_created`，`POST /api/sessions/:id/workplan` 应返回 `409`，不会写入 `workplan_generation_started`。
+如果没有 `design_commit_created` 或 `design_revision_committed`，`POST /api/sessions/:id/workplan` 应返回 `409`，不会写入任何 `workplan_*` 事件。
+
+## Workplan Council Smoke Test (Node 全栈)
+
+Workbench 中对已完成且有 `design.latest_commit` 的 `mode=design_council` session 点击 Generate Workplan 后，预期流程：
+
+```text
+workplan_draft_started
+-> workplan_draft_written
+-> workplan_draft_committed
+-> workplan_review_started
+-> agent_turn_completed（reviewer）
+-> workplan_review_completed
+-> [有 blocker 或 revise 建议时] workplan_author_response_started
+-> [有 blocker 或 revise 建议时] agent_turn_completed（author）
+-> [有 blocker 或 revise 建议时] workplan_author_response_completed
+-> [采纳或部分采纳时] workplan_revision_written
+-> [采纳或部分采纳时] workplan_revision_committed
+-> workplan_approval_requested
+```
+
+workplan artifact 位于：
+
+```text
+docs/workplans/YYYY-MM-DD-<slug>.md
+```
+
+预期派生状态：
+
+```json
+{
+  "status": "waiting_for_user",
+  "waiting_for": "workplan_approval",
+  "workplan": {
+    "artifact_path": "docs/workplans/YYYY-MM-DD-<slug>.md",
+    "latest_commit": "<commit>",
+    "approved_commit": null,
+    "status": "awaiting_approval"
+  }
+}
+```
+
+批准和拒绝：
+
+```text
+POST /api/sessions/:id/workplan/approve -> workplan_approved
+POST /api/sessions/:id/workplan/reject  -> workplan_approval_rejected
+```
+
+批准或拒绝前必须校验 `status === "waiting_for_user"` 且 `waiting_for === "workplan_approval"`。拒绝后可再次调用 `POST /api/sessions/:id/workplan` 重新生成；生成失败时如果同名 workplan 文件已存在，系统应保留文件并通过 `ask_user_to_resolve_dirty_workplan` 让用户处理，避免删除用户本地内容。
 
 ## Windows UTF-8 说明
 

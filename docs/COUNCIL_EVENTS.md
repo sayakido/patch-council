@@ -291,7 +291,9 @@ design_revision_committed
 
 ## Workplan Council v1 事件
 
-Workplan Council v1 从已提交的 design artifact 生成 writing-plans 风格 Markdown workplan，经过 council review / revision 后等待用户批准。所有 workplan 事件使用 `phase: "finalized"`，不修正 `session_finished.outcome`；调用方应通过派生状态里的 `workplan.status` 判断计划产物状态。
+Workplan Council v1 从已提交的 design artifact 生成 writing-plans 风格 Markdown workplan，经过 council review / author response / revision 后等待用户批准。所有新 workplan 事件使用 `phase: "finalized"`，表示它们是 discussion 收束后的 post-discussion artifact lifecycle；`phase` 不表达 workplan 自身的 draft/review/revision 状态。
+
+Workplan 事件不修正 `session_finished.outcome`。调用方应通过派生状态里的 `state.workplan.status`、`state.workplan.latest_commit` 和 `state.waiting_for` 判断计划产物状态。
 
 ### 生成流程
 
@@ -301,8 +303,10 @@ workplan_draft_started
   -> workplan_draft_committed (or workplan_draft_commit_failed)
   -> workplan_review_started
   -> (agent_turn_completed by reviewer)
-  -> workplan_review_completed (if requires_author_response: workplan_author_response_started -> agent_turn_completed by author -> workplan_author_response_completed)
-  -> (workplan_revision_written -> workplan_revision_committed if revision needed)
+  -> workplan_review_completed
+  -> (if blocker or revise recommendation: workplan_author_response_started -> agent_turn_completed by author -> workplan_author_response_completed)
+  -> (if author accepts or partially accepts: workplan_revision_written -> workplan_revision_committed)
+  -> (if author rejects: continue review loop without writing a revision)
   -> workplan_approval_requested
   -> (user action: workplan_approved | workplan_approval_rejected)
 ```
@@ -355,7 +359,7 @@ Workplan 已通过 git commit（或 commit 失败）。
 
 #### workplan_review_started / workplan_review_completed
 
-Coordinator 路由 reviewer agent，reviewer 完成审查。`requires_revision` 表示是否需要 author response / revision。
+Coordinator 路由 reviewer agent，reviewer 完成审查。`requires_revision` 表示 review 提出了 blocker 或 revise 建议，需要 author response；是否真的写 revision 由 author response 的 `decision` 和 `revision_required` 决定。
 
 ```json
 {
@@ -370,7 +374,7 @@ Coordinator 路由 reviewer agent，reviewer 完成审查。`requires_revision` 
 
 #### workplan_author_response_started / workplan_author_response_completed
 
-Author (codex) 回应 reviewer findings。`decision` 取 `accept` / `partially_accept` / `reject`。
+Author (codex) 回应 reviewer findings。`decision` 取 `accept` / `partially_accept` / `reject`。Author response 也会写入一条 `agent_turn_completed`，让 reviewer、coordinator 和 UI 都能看到 author 是否采纳建议以及理由；它本身不写文件。
 
 ```json
 {
@@ -387,7 +391,7 @@ Author (codex) 回应 reviewer findings。`decision` 取 `accept` / `partially_a
 
 #### workplan_revision_written / workplan_revision_committed / workplan_revision_commit_failed
 
-Author 根据 reviewer 反馈修订 workplan 并重新 commit。
+Author 根据 reviewer 反馈修订 workplan 并重新 commit。只有 author response 为 `accept` 或 `partially_accept` 且 `revision_required: true` 时才应写 revision。`latest_commit` 取最后一个 `workplan_draft_committed` 或 `workplan_revision_committed` 的 `commit`。
 
 #### workplan_approval_requested
 
@@ -405,7 +409,7 @@ Review loop 完成，等待 Host 批准。
 
 #### workplan_approved / workplan_approval_rejected
 
-Host 批准或拒绝 workplan。
+Host 批准或拒绝 workplan。批准或拒绝前必须校验派生状态为 `status: "waiting_for_user"` 且 `waiting_for: "workplan_approval"`，避免异步生成过程中被并发 approve/reject。
 
 ```json
 {
@@ -420,6 +424,8 @@ Host 批准或拒绝 workplan。
 ### Legacy JSON workplan
 
 旧 `workplan_created` 事件（legacy JSON workplan v1）在新流程中不再发出。旧 session 可能仍包含该事件，消费者必须兼容。
+
+旧字段 `has_workplan` / `workplan_status` 仅用于 legacy JSON workplan 兼容。新 UI 和 API 应优先读取 `state.workplan`。
 
 ### 派生状态中的 workplan
 
@@ -848,7 +854,7 @@ error
 cancelled
 ```
 
-Workplan 是 discussion 结束后的派生产物，不修正 `session_finished.outcome`。调用方应通过派生状态里的 `has_workplan` 和 `workplan_status` 判断计划产物状态。
+Workplan 是 discussion 结束后的派生产物，不修正 `session_finished.outcome`。旧 JSON workplan 可继续通过 `has_workplan` 和 `workplan_status` 兼容读取；新 Workplan Council v1 应通过 `state.workplan` 判断 artifact、commit、approval 和失败状态。
 
 ## Design Council 事件
 
@@ -1086,6 +1092,20 @@ session_finished
 workplan_generation_started
 workplan_created
 workplan_generation_failed
+workplan_draft_started
+workplan_draft_written
+workplan_draft_committed
+workplan_draft_commit_failed
+workplan_review_started
+workplan_review_completed
+workplan_author_response_started
+workplan_author_response_completed
+workplan_revision_written
+workplan_revision_committed
+workplan_revision_commit_failed
+workplan_approval_requested
+workplan_approved
+workplan_approval_rejected
 agent_error
 coordinator_error
 session_error
@@ -1115,7 +1135,7 @@ aictl session status <id>
 ```json
 {
   "session_id": "20260527-001",
-  "status": "done",
+  "status": "waiting_for_user",
   "phase": "finalized",
   "topic": "讨论下一步优先级",
   "started_at": "2026-05-27T10:00:00+08:00",
@@ -1125,8 +1145,19 @@ aictl session status <id>
   "last_seq": 14,
   "outcome": "discussion_only",
   "error_count": 0,
-  "has_workplan": true,
-  "workplan_status": "created"
+  "waiting_for": "workplan_approval",
+  "has_workplan": false,
+  "workplan_status": "none",
+  "workplan": {
+    "artifact_path": "docs/workplans/2026-06-02-topic.md",
+    "source_design_commit": "abc1234",
+    "draft_commit": "def5678",
+    "latest_commit": "ghi9012",
+    "approved_commit": null,
+    "status": "awaiting_approval",
+    "title": "Topic Implementation Plan",
+    "revision": 1
+  }
 }
 ```
 
@@ -1143,9 +1174,9 @@ error
 cancelled
 ```
 
-`waiting_for_user` 表示 engine 需要 Host 输入才可继续。当前仅 `mode=design_council` 在 brainstorming 阶段出现此状态。
+`waiting_for_user` 表示 engine 需要 Host 输入才可继续。当前可能出现在 `mode=design_council` 的 brainstorming 阶段（`waiting_for: "brainstorming_answer"`），也可能出现在 Workplan Council v1 等待用户批准阶段（`waiting_for: "workplan_approval"`）。
 
-`workplan_status` 建议取值：
+`workplan_status` 是 legacy JSON workplan v1 的兼容字段。新 Workplan Council v1 应读取 `workplan.status`，建议取值：
 
 ```text
 none
@@ -1191,7 +1222,7 @@ legacy_json_created
 
 ## 未来扩展：执行编排
 
-当前已支持只读 council discussion，以及 discussion 后按需生成结构化 workplan。未来如果支持“AI 讨论后分工执行”，应继续使用同一个 session 事件日志，而不是另建一套日志系统。
+当前已支持只读 council discussion、Design Council，以及从 latest design commit 生成并 review Markdown Workplan 的 Workplan Council v1。未来如果支持“AI 按已批准 workplan 分工执行”，应继续使用同一个 session 事件日志，而不是另建一套日志系统。
 
 未来可增加事件：
 
@@ -1210,7 +1241,7 @@ fix_requested
 
 ```text
 1. 只读 council 可观察化（已支持）
-2. 讨论后生成结构化 workplan（已支持）
+2. 从 design latest commit 生成 Markdown workplan，并经过 council review / 用户批准（已支持）
 3. 用户确认后执行 workplan
 4. 多 agent 分工执行、汇总和 review
 ```

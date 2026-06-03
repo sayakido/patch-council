@@ -4,7 +4,7 @@
 
 ## 现在
 
-当前焦点：**Workbench v1**——Node 全栈 Web 工作台。
+当前焦点：**Workbench + Council artifacts**——Node 全栈 Web 工作台、Design Council 和 Workplan Council。
 
 Workbench v1 状态：
 
@@ -29,15 +29,15 @@ Workbench v1 状态：
 - ~~Workplan v1: 讨论后生成结构化 JSON workplan，暂不自动执行~~ ✓ 完成（已被 Workplan Council v1 取代）
 - ~~Agent Turn Signal v1: agent 发言结构化 signal + finalize gate~~ ✓ 完成
 - ~~Design Council Workflow v1: brainstorming prelude + git-backed design review~~ ✓ 完成
-- ~~Workplan Council v1: 从 design latest commit 生成 Markdown workplan，经过 council review/revision 后等待用户批准；暂不执行代码~~ ✓ 完成
+- ~~Workplan Council v1: 从 design latest commit 生成 Markdown workplan，经过 council review / author response / revision 后等待用户批准；暂不执行代码~~ ✓ 完成
 
 Workbench v1 已合并到 master。以下为后续方向。
 
 ## 以后
 
 1. （已完成：JSON 解析失败、未知 agent、最大轮数兜底已在 engine 中实现）
-2. （已完成：46 个 council engine 集成测试覆盖关键场景）
-3. （已完成：Workplan Council v1）从 design latest commit 生成 Markdown workplan，经过 review/revision 后等待用户批准；暂不执行代码。
+2. （已完成：48 个 council engine 集成测试覆盖关键场景）
+3. （已完成：Workplan Council v1）从 design latest commit 生成 Markdown workplan，经过 review / author response / revision 后等待用户批准；暂不执行代码。
 4. （已完成）design council 默认先澄清用户意图，提交 design draft，再进入 council review。
 5. 在 Workbench 中增加自然语言入口：
 
@@ -58,7 +58,7 @@ Workbench v1 已合并到 master。以下为后续方向。
 
 7. 当自然语言请求涉及修改文件时，要求用户有明确意图或进行二次确认。
 
-8. 支持讨论后分工执行：
+8. 支持用户批准 workplan 后分工执行：
 
 ```text
 discussion

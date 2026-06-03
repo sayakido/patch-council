@@ -31,12 +31,13 @@ npm run start
 - Step 1.5 完成：`runCliRuntime` 已支持 `input` / `input_mode`，`codex exec --json ... -` stdin 路径和 Claude `-p ... --output-format stream-json` argument 路径都已真实测通。
 - Step 2+3+4+5 完成：council engine、session store、CLI 入口、Web UI 实时轮询全部交付。
 - Workbench v1 完成并已合并：chat 工作台 UI（三栏布局）、host 控制（interjection / cancel）、session fork/continue（source metadata）、配置页面（`/config.html`）。
-- Workplan v1 已实现：`done` session 可按需生成结构化 workplan，事件追加到 `transcript.jsonl`，状态通过 `has_workplan` / `workplan_status` 派生，不改变 `session_finished.outcome`。
+- Workplan Council v1 已实现：`design_council` session 必须先有 `design.latest_commit`，之后可按需生成 writing-plans 风格 Markdown workplan，写入 `docs/workplans/YYYY-MM-DD-<slug>.md`，经过 council review / author response / revision 后进入用户批准；v1 不执行代码。
 
 ## Council 模型
 
 - `aictl council "主题"` 会启动一个只读的多 agent 讨论。
 - `mode=design_council` starts with a single-agent brainstorming prelude, writes `docs/designs/...md`, commits it, then reuses the existing council loop for review.
+- Workplan Council 发生在 design discussion 收束之后，统一使用 `phase: finalized` 作为 post-discussion artifact lifecycle；workplan 自身状态由 `state.workplan.status` 表达。
 - coordinator 负责判断下一轮应该由哪个 AI 发言。
 - agent 发言顺序是动态的，不再硬编码为固定顺序。
 - 每轮 agent 发言后，coordinator 判断继续讨论还是收束。
@@ -57,6 +58,9 @@ npm run start
 -> 策略检查（min_distinct_agents、finalize gate、max_turns）
 -> 可选的下一轮 AI agent 发言
 -> coordinator finalize，输出最终总结
+-> [mode=design_council 且用户点击 Generate Workplan] 从 latest design commit 起草 Markdown workplan
+-> workplan council review / author response / optional revision
+-> workplan_approval_requested，等待用户批准或拒绝
 ```
 
 Host 可在运行中插入消息（interjection），下一轮 coordinator 路由时可见。Host 也可请求取消（cancel），engine 在当前 turn 完成后停止。
@@ -112,6 +116,11 @@ council_finalize.md
 brainstorming_ask_or_draft.md
 design_draft.md
 design_revision.md
+workplan_draft.md
+workplan_review.md
+workplan_author_response.md
+workplan_revision.md
+workplan_finalize.md
 ```
 
 ## 当前策略和限制
@@ -150,7 +159,7 @@ aictl council --help
 Node 全栈（`apps/patchcouncil-ui/`）：
 ```bash
 npm run check            # 全部 JS 文件语法检查
-npm run smoke            # HTTP smoke + 46 council engine 集成测试
+npm run smoke            # HTTP smoke + 48 council engine 集成测试
 npm run start            # Web UI（http://127.0.0.1:8765），含 chat 工作台 + /config.html
 npm run runtime:fake     # fake runtime 矩阵
 npm run runtime:codex    # 真实 Codex CLI 验证
@@ -160,4 +169,4 @@ node cli/cli.js council "话题"   # 真实 council 讨论
 
 ## 下一步优先级
 
-见 `docs/ROADMAP.md`。Workbench v1 和 Workplan v1 已交付并合并，下一步进入自然语言入口和分工执行方向。
+见 `docs/ROADMAP.md`。Workbench v1、Design Council Workflow v1 和 Workplan Council v1 已交付，下一步进入自然语言入口和按已批准 workplan 分工执行方向。

@@ -116,6 +116,10 @@ AI CLI raw output
 
 Web 工作台将 council event 投影为 chat 消息：agent_turn_completed → agent 气泡，coordinator_decided → 系统行，user_interjection → host 气泡，finalized → 摘要卡片。Workplan events 是 discussion 完成后的派生产物，投影为 Workplan 卡片或生成状态，不改变 `session_finished.outcome`。
 
+Workplan Council v1 只在 `mode=design_council` 且存在 `design.latest_commit` 后启用。它从 latest design artifact / commit 生成 writing-plans 风格 Markdown workplan，写入 `docs/workplans/YYYY-MM-DD-<slug>.md` 并创建 git commit。随后 reviewer 通过 council loop 审查 workplan；author agent 必须先回应 review，明确 `accept` / `partially_accept` / `reject`，只有采纳或部分采纳时才写 revision。review loop 通过 finalize gate 后写入 `workplan_approval_requested`，session 进入 `waiting_for_user` / `waiting_for: "workplan_approval"`。批准只记录 `workplan_approved`，v1 不进入代码执行。
+
+旧 `workplan_created` JSON event 仅为 legacy session 兼容保留。新流程使用 `state.workplan` 里的 `artifact_path`、`latest_commit`、`approved_commit` 和 `status` 投影。
+
 `runtime.reply.delta` 可用于实时流式渲染，但默认不写入 `transcript.jsonl`。`agent_turn_completed` 是 council 层完整发言事件，应写入完整回复内容，保证事件日志可以完整重建 session。
 
 ## 上下文压缩
@@ -189,6 +193,11 @@ council_finalize.md
 brainstorming_ask_or_draft.md
 design_draft.md
 design_revision.md
+workplan_draft.md
+workplan_review.md
+workplan_author_response.md
+workplan_revision.md
+workplan_finalize.md
 ```
 
 ## 策略层

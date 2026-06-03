@@ -2,6 +2,49 @@
 
 这个文件记录已经相对稳定的项目决策和背后的理由。
 
+## 2026-06-02：Workplan Council v1 取代 JSON Workplan v1
+
+状态：已接受
+
+### 背景
+
+旧 Workplan v1 在 discussion 完成后单次生成结构化 JSON workplan。它能作为执行编排前的最小台阶，但缺少 design commit 锚点、review / revision 生命周期和用户批准门槛。随着 Design Council 引入 `docs/designs/...md` 和 git commit，workplan 也应该从已提交的 design artifact 派生，而不是直接从开放式 discussion summary 派生。
+
+用户期望 workplan 本身也走类似 Design Council 的协作流程：author 起草，reviewer 审查，author 明确回应 review 并决定采纳、部分采纳或拒绝，然后在用户批准前停止。
+
+### 决策
+
+新增 Workplan Council v1：
+
+```text
+design_council session done
+-> state.design.latest_commit 存在
+-> 用户请求 Generate Workplan
+-> author 从 latest design artifact / commit 起草 Markdown workplan
+-> 写入 docs/workplans/YYYY-MM-DD-<slug>.md
+-> git commit draft workplan
+-> coordinator route reviewer
+-> reviewer 通过 agent_turn_completed.signal 给出 review
+-> 如有 blocker 或 revise 建议，author 先输出 author response
+-> author decision 为 accept / partially_accept 时写 revision 并 commit
+-> review loop 通过 finalize gate 后写 workplan_approval_requested
+-> session status = waiting_for_user, waiting_for = workplan_approval
+-> 用户 approve 或 reject
+```
+
+新 workplan artifact 是 writing-plans 风格 Markdown，不再为新流程发出 `workplan_created(workplan JSON)`。旧 `workplan_created` 仅用于历史 session 兼容。
+
+Workplan Council v1 仍是 post-discussion artifact lifecycle，所有新 workplan 事件使用 `phase: "finalized"`。`phase` 表示 discussion 已收束；workplan 的 draft/review/revision/approval 状态由事件类型和 `state.workplan.status` 表达。
+
+批准只记录 `workplan_approved`，v1 不自动执行代码。拒绝记录 `workplan_approval_rejected`，之后允许重新调用 `POST /api/sessions/:id/workplan` 生成新计划。生成失败遇到同名本地文件时必须保留文件，使用 `ask_user_to_resolve_dirty_workplan` 提醒用户处理，避免删除用户内容。
+
+### 影响
+
+- `POST /api/sessions/:id/workplan` 只允许 `design_council` 且已有 `design.latest_commit` 的 session。
+- `state.json` 新增 `workplan` 投影：`artifact_path`、`source_design_commit`、`draft_commit`、`latest_commit`、`approved_commit`、`status`、`title`、`revision`。
+- Workbench 使用 Workplan 卡片展示生成、review、approval、approved、rejected 和 failed 状态。
+- 后续“按 workplan 实现代码”必须以 `workplan_approved.approved_commit` 为输入另行设计，不复用生成阶段的批准语义。
+
 ## 2026-06-02：Design Council 作为澄清和设计评审入口
 
 状态：已接受
