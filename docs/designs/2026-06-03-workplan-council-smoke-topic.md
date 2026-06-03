@@ -1,1 +1,9 @@
-{"stance":"agree","confidence":"high","finalize_readiness":"ready","blockers":[],"agreements":["Fake runtime can provide structured agent signal."],"disagreements":[],"recommended_next_step":"Finalize when policy allows.","analysis":"Fake response from codex: structured signal generated for smoke tests."}
+# Smoke Design
+
+## Goal
+
+Verify Workplan Council end-to-end.
+
+## Scope
+
+HTTP API and event flow.
