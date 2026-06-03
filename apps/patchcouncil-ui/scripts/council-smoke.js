@@ -8,6 +8,7 @@ const { SessionStore } = require("../engine/session-store");
 const {
   CouncilEngine,
   parseAgentTurnSignal,
+  parseAuthorResponse,
   fallbackAgentSignal,
   shouldAllowFinalize,
   latestSignalsByAgent,
@@ -1865,6 +1866,19 @@ async function testDesignRevisionCommittedAfterReview() {
     { match: (p) => p.includes("Markdown design doc"), response: { ok: true, text: "# Test Design\n\n## Goal\n\nBuild it.\n" } },
     { match: isRoutePrompt, response: { ok: true, text: JSON.stringify({ decision: "continue", next_agent: "claude", role: "reviewer", reason: "review" }) } },
     { match: isAgentTurnPrompt, response: { ok: true, text: JSON.stringify({ stance: "mixed", confidence: "high", finalize_readiness: "not_ready", blockers: [{ type: "issue", text: "Need explicit API behavior." }], agreements: [], disagreements: ["API behavior missing."], recommended_next_step: "revise design", analysis: "The design needs explicit API behavior." }) } },
+    { match: (prompt) => prompt.includes("Review the reviewer findings and decide whether to accept"), response: { ok: true, text: JSON.stringify({
+      decision: "partially_accept",
+      reason: "API behavior should be explicit; implementation details remain out of scope.",
+      revision_required: true,
+      stance: "mixed",
+      confidence: "high",
+      finalize_readiness: "not_ready",
+      blockers: [{ type: "issue", text: "Need explicit API behavior." }],
+      agreements: ["Add API behavior."],
+      disagreements: ["Do not add implementation plan details."],
+      recommended_next_step: "revise design",
+      analysis: "Revise the design with accepted API behavior only."
+    }) } },
     { match: (p) => p.includes("Revise the Markdown design doc"), response: { ok: true, text: "# Test Design\n\n## Goal\n\nBuild it.\n\n## API behavior\n\nUse /brainstorming/answer.\n" } },
     { match: isDecidePrompt, response: { ok: true, text: JSON.stringify({ decision: "finalize", next_agent: null, role: null, reason: "revision done" }) } },
     { match: isFinalizePrompt, response: { ok: true, text: JSON.stringify({ consensus: "Design revised.", disagreements: "none", recommended_next_step: "generate workplan", needs_confirmation: false, next_steps: ["generate workplan"] }) } },
@@ -1879,6 +1893,8 @@ async function testDesignRevisionCommittedAfterReview() {
     },
   });
 
+  assert.ok(events.some((e) => e.type === EVENTS.DESIGN_AUTHOR_RESPONSE_COMPLETED && e.decision === "partially_accept"));
+  assert.ok(events.some((e) => e.type === EVENTS.AGENT_TURN_COMPLETED && e.agent === "codex" && e.signal && e.signal.recommended_next_step === "revise design"));
   assert.ok(events.some((e) => e.type === EVENTS.DESIGN_REVISION_WRITTEN));
   const committed = events.find((e) => e.type === EVENTS.DESIGN_REVISION_COMMITTED);
   assert.equal(committed.source_commit, "abc1234");
@@ -1977,6 +1993,56 @@ async function testDesignAuthorResponseDerivesStateAndTranscript() {
   pass();
 }
 
+async function testDesignAuthorResponseRejectSkipsRevision() {
+  setupTest("design author response reject skips revision");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  config.design_council = { lead_agent: "codex", max_questions: 8 };
+  config.council.min_distinct_agents = 1;
+  config.council.max_turns = 3;
+
+  // NOTE: reviewer uses revise recommendation WITHOUT blockers so the finalize
+  // gate passes cleanly after lead rejects.  When a reviewer DOES have blockers
+  // and the lead rejects, the reviewer's blockers remain in latestSignalsByAgent
+  // and the finalize gate will block — the council then continues discussion,
+  // which is correct collaborative behavior (coordinator routes another agent to
+  // break the tie or the reviewer responds to the lead's rejection).
+  const { events } = await runEngine(config, [
+    { match: (p) => p.includes("brainstorming") || p.includes("一次只问一个问题"), response: { ok: true, text: JSON.stringify({ decision: "draft_design", reason: "ok", known_context: [], missing_context: [] }) } },
+    { match: (p) => p.includes("Markdown design doc"), response: { ok: true, text: "# Feature Design\n\n## Goal\n\nKeep existing API scope.\n" } },
+    { match: isRoutePrompt, response: { ok: true, text: JSON.stringify({ decision: "continue", next_agent: "claude", role: "reviewer", reason: "review design" }) } },
+    { match: isAgentTurnPrompt, response: { ok: true, text: JSON.stringify({ stance: "agree", confidence: "high", finalize_readiness: "ready", blockers: [], agreements: ["Design scope is appropriate."], disagreements: ["Implementation details missing."], recommended_next_step: "revise design", analysis: "Reviewer suggests adding implementation detail guidance." }) } },
+    { match: (prompt) => prompt.includes("Review the reviewer findings and decide whether to accept"), response: { ok: true, text: JSON.stringify({
+      decision: "reject",
+      reason: "Implementation details belong in workplan, not design.",
+      revision_required: false,
+      stance: "disagree",
+      confidence: "high",
+      finalize_readiness: "ready",
+      blockers: [],
+      agreements: [],
+      disagreements: ["Do not add implementation details to design."],
+      recommended_next_step: "continue review",
+      analysis: "The design should preserve abstraction and let Workplan Council handle implementation details."
+    }) } },
+    { match: isDecidePrompt, response: { ok: true, text: JSON.stringify({ decision: "finalize", next_agent: null, role: null, reason: "lead rejected invalid review finding" }) } },
+    { match: isFinalizePrompt, response: { ok: true, text: JSON.stringify({ consensus: "Design reviewed.", disagreements: "Implementation detail request rejected by lead.", recommended_next_step: "generate workplan", needs_confirmation: false, next_steps: ["generate workplan"] }) } },
+  ], {
+    mode: "design_council",
+    runGit: async (args) => {
+      if (args[0] === "rev-parse") return { ok: true, text: "abc1234\n" };
+      return { ok: true, text: "" };
+    },
+  });
+
+  assert.ok(events.some((e) => e.type === EVENTS.DESIGN_AUTHOR_RESPONSE_COMPLETED && e.decision === "reject"));
+  assert.equal(events.some((e) => e.type === EVENTS.DESIGN_REVISION_WRITTEN), false);
+  assert.equal(events.some((e) => e.type === EVENTS.DESIGN_REVISION_COMMITTED), false);
+
+  teardownTest();
+  pass();
+}
+
 async function testPreludeErrorEmitsSessionFinished() {
   setupTest("prelude error emits session_error + session_finished");
 
@@ -2052,6 +2118,7 @@ async function main() {
   await testDesignRevisionCommittedAfterReview();
   await testDesignCouncilWorkplanRequiresDesignCommit();
   await testDesignAuthorResponseDerivesStateAndTranscript();
+  await testDesignAuthorResponseRejectSkipsRevision();
   await testPreludeErrorEmitsSessionFinished();
   await testDeriveStateExposesModeAndDesignStatus();
   await testWorkbenchEventConstants();

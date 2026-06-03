@@ -147,6 +147,26 @@ function parseAgentTurnSignal(raw) {
   return { ok: true, content: parsed.analysis, signal };
 }
 
+function parseAuthorResponse(text) {
+  const parsed = JSON.parse(String(text || "").trim());
+  const decision = ["accept", "partially_accept", "reject"].includes(parsed.decision)
+    ? parsed.decision
+    : "reject";
+  return {
+    decision,
+    reason: String(parsed.reason || parsed.analysis || "Lead did not accept the review as written."),
+    revision_required: Boolean(parsed.revision_required),
+    stance: parsed.stance || (decision === "reject" ? "disagree" : "mixed"),
+    confidence: parsed.confidence || "medium",
+    finalize_readiness: parsed.finalize_readiness || "not_ready",
+    blockers: Array.isArray(parsed.blockers) ? parsed.blockers : [],
+    agreements: Array.isArray(parsed.agreements) ? parsed.agreements : [],
+    disagreements: Array.isArray(parsed.disagreements) ? parsed.disagreements : [],
+    recommended_next_step: parsed.recommended_next_step || (decision === "reject" ? "continue review" : "revise design"),
+    analysis: String(parsed.analysis || parsed.reason || ""),
+  };
+}
+
 function latestSignalsByAgent(eventLog) {
   const byAgent = new Map();
   for (const event of eventLog) {
@@ -511,14 +531,21 @@ class CouncilEngine extends EventEmitter {
           this.turnCount++;
           this.spokenAgents.add(agentName);
 
-          // --- design revision trigger ---
+          // --- design author response trigger ---
           if (this.mode === "design_council" && turnResult && turnResult.event) {
             const reviewEvent = turnResult.event;
             const signal = reviewEvent.signal;
             const hasBlocker = signal && Array.isArray(signal.blockers) && signal.blockers.length > 0;
             const recommendRevise = signal && typeof signal.recommended_next_step === "string" && /revise/i.test(signal.recommended_next_step);
             if (hasBlocker || recommendRevise) {
-              await this.reviseDesignFromLatestReview(topic, reviewEvent);
+              const authorResponse = await this.respondToDesignReview(reviewEvent);
+              if (
+                authorResponse &&
+                authorResponse.response.revision_required &&
+                (authorResponse.response.decision === "accept" || authorResponse.response.decision === "partially_accept")
+              ) {
+                await this.reviseDesignFromLatestReview(topic, reviewEvent, authorResponse);
+              }
             }
           }
 
@@ -800,7 +827,71 @@ class CouncilEngine extends EventEmitter {
     return { ok: true, artifactPath, commit: committed.commit };
   }
 
-  async reviseDesignFromLatestReview(topic, reviewEvent) {
+  async respondToDesignReview(reviewEvent) {
+    const latestFile = [...this.eventLog].reverse().find((e) => e.type === events.EVENTS.DESIGN_FILE_WRITTEN || e.type === events.EVENTS.DESIGN_REVISION_WRITTEN);
+    const latestCommit = [...this.eventLog].reverse().find((e) => e.type === events.EVENTS.DESIGN_REVISION_COMMITTED || e.type === events.EVENTS.DESIGN_COMMIT_CREATED);
+    if (!latestFile || !latestCommit) return null;
+
+    const dc = resolveDesignCouncilConfig(this.config, this.brainstormingConfig);
+    const agents = availableAgents(this.config.agents);
+    const author = dc.lead_agent;
+    const currentDesign = fs.readFileSync(latestFile.artifact_path, "utf8");
+    const signalText = reviewEvent.signal ? JSON.stringify(reviewEvent.signal, null, 2) : "";
+
+    this.emitEvent(events.EVENTS.DESIGN_AUTHOR_RESPONSE_STARTED, {
+      artifact_path: latestFile.artifact_path,
+      design_commit: latestCommit.commit,
+      author,
+      source_review_seq: reviewEvent.seq,
+    });
+
+    const prompt = this.prompts.renderPrompt("design_author_response.md", {
+      source_design_path: latestFile.artifact_path,
+      source_design_commit: latestCommit.commit,
+      design: currentDesign,
+      review: reviewEvent.content || "",
+      signal: signalText,
+    });
+    const result = await this.runAgent(author, agents[author], prompt);
+    if (!result.ok) return null;
+
+    const response = parseAuthorResponse(result.text || "");
+    const authorSignal = {
+      stance: response.stance,
+      confidence: response.confidence,
+      finalize_readiness: response.finalize_readiness,
+      blockers: response.blockers,
+      agreements: response.agreements,
+      disagreements: response.disagreements,
+      recommended_next_step: response.recommended_next_step,
+      analysis: response.analysis,
+    };
+
+    const authorTurn = this.emitEvent(events.EVENTS.AGENT_TURN_COMPLETED, {
+      turn: this.turnCount + 1,
+      agent: author,
+      content: response.reason,
+      content_length: response.reason.length,
+      duration_ms: 0,
+      signal: authorSignal,
+    });
+    this.turnCount++;
+    this.spokenAgents.add(author);
+
+    this.emitEvent(events.EVENTS.DESIGN_AUTHOR_RESPONSE_COMPLETED, {
+      artifact_path: latestFile.artifact_path,
+      design_commit: latestCommit.commit,
+      author,
+      source_review_seq: reviewEvent.seq,
+      source_agent_turn_seq: authorTurn.seq,
+      decision: response.decision,
+      revision_required: response.revision_required,
+    });
+
+    return { response, authorSignal, authorTurn, latestFile, latestCommit };
+  }
+
+  async reviseDesignFromLatestReview(topic, reviewEvent, authorResponse) {
     const design = require("./design-council");
     const latestFile = [...this.eventLog].reverse().find((e) => e.type === events.EVENTS.DESIGN_FILE_WRITTEN || e.type === events.EVENTS.DESIGN_REVISION_WRITTEN);
     const latestCommit = [...this.eventLog].reverse().find((e) => e.type === events.EVENTS.DESIGN_REVISION_COMMITTED || e.type === events.EVENTS.DESIGN_COMMIT_CREATED);
@@ -813,7 +904,12 @@ class CouncilEngine extends EventEmitter {
       reviewEvent.content || "",
       reviewEvent.signal ? JSON.stringify(reviewEvent.signal, null, 2) : "",
     ].filter(Boolean).join("\n\n");
-    const prompt = this.prompts.renderPrompt("design_revision.md", { design: currentDesign, findings });
+    const prompt = this.prompts.renderPrompt("design_revision.md", {
+      design: currentDesign,
+      findings,
+      author_response: authorResponse ? JSON.stringify(authorResponse.response, null, 2) : "",
+      author_signal: authorResponse ? JSON.stringify(authorResponse.authorSignal, null, 2) : "",
+    });
     const result = await this.runAgent(dc.lead_agent, agents[dc.lead_agent], prompt);
     if (!result.ok) return null;
 
@@ -823,6 +919,7 @@ class CouncilEngine extends EventEmitter {
       artifact_path: latestFile.artifact_path,
       source_commit: latestCommit.commit,
       source_review_seq: reviewEvent.seq,
+      source_author_response_seq: authorResponse?.authorTurn?.seq || null,
       generator: dc.lead_agent,
       revision,
     });
@@ -1258,5 +1355,5 @@ class CouncilEngine extends EventEmitter {
   }
 }
 
-module.exports = { CouncilEngine, parseJsonDecision, parseAgentTurnSignal, fallbackAgentSignal, latestSignalsByAgent, shouldAllowFinalize, resolveAgentName, clipText, formatAgentProfiles, selectCoordinator, collectContext, availableAgents, resolveDesignCouncilConfig, validateRequiredAgents };
+module.exports = { CouncilEngine, parseJsonDecision, parseAgentTurnSignal, parseAuthorResponse, fallbackAgentSignal, latestSignalsByAgent, shouldAllowFinalize, resolveAgentName, clipText, formatAgentProfiles, selectCoordinator, collectContext, availableAgents, resolveDesignCouncilConfig, validateRequiredAgents };
 CouncilEngine.validateRequiredAgents = validateRequiredAgents;
