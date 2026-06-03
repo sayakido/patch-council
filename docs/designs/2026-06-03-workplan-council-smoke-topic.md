@@ -1,9 +1,1 @@
-# Smoke Design
-
-## Goal
-
-Verify Workplan Council end-to-end.
-
-## Scope
-
-HTTP API and event flow.
+Fake response from codex: received prompt (922 chars)
