@@ -1038,6 +1038,59 @@ async function testGenerateMarkdownWorkplanCouncilFlow() {
   pass();
 }
 
+async function testWorkplanDirtyFailedRetryPreservesUserFile() {
+  setupTest("workplan dirty failed retry preserves user file");
+
+  const store = new SessionStore(testDir);
+  const session = store.createSession("dirty retry workplan");
+  const designPath = path.join(testDir, "docs", "designs", "2026-06-02-dirty-retry.md");
+  fs.mkdirSync(path.dirname(designPath), { recursive: true });
+  fs.writeFileSync(designPath, "# Dirty Retry Design\n\n## Goal\n\nProtect user files.\n", "utf8");
+
+  store.appendEvent(session.dir, {
+    schema_version: 1, seq: 0, type: EVENTS.SESSION_STARTED, phase: "brainstorming",
+    session_id: session.id, started_at: "2026-06-02T10:00:00+08:00",
+    topic: "dirty retry workplan", mode: "design_council", config: {}, capabilities: {}, agents: [],
+  });
+  store.appendEvent(session.dir, { schema_version: 1, seq: 1, type: EVENTS.DESIGN_FILE_WRITTEN, phase: "brainstorming", session_id: session.id, artifact_path: designPath, generator: "codex", title: "Dirty Retry Design", revision: 0 });
+  store.appendEvent(session.dir, { schema_version: 1, seq: 2, type: EVENTS.DESIGN_COMMIT_CREATED, phase: "brainstorming", session_id: session.id, artifact_path: designPath, commit: "abc123", commit_message: "docs: draft dirty retry design" });
+  store.appendEvent(session.dir, { schema_version: 1, seq: 3, type: EVENTS.SESSION_FINISHED, phase: "finalized", session_id: session.id, finished_at: "2026-06-02T10:01:00+08:00", outcome: "discussion_only", duration_ms: 1, turn_count: 0, distinct_agents: [], error_count: 0 });
+
+  const artifactPath = buildWorkplanArtifactPath(testDir, "dirty retry workplan");
+  ensureWorkplanDirectory(artifactPath);
+  fs.writeFileSync(artifactPath, "user-owned workplan draft\n", "utf8");
+
+  const config = JSON.parse(JSON.stringify(MINIMAL_CONFIG));
+  const options = {
+    config,
+    sessionStore: store,
+    sessionDir: session.dir,
+    sessionId: session.id,
+    projectRoot: testDir,
+    topic: "dirty retry workplan",
+    prompts,
+    runAgent: async () => {
+      throw new Error("dirty retry test should fail before invoking agents");
+    },
+    runGit: async () => {
+      throw new Error("dirty retry test should fail before invoking git");
+    },
+    onEvent: (event) => store.appendEvent(session.dir, event),
+  };
+
+  const first = await generateWorkplanForSession(options);
+  assert.equal(first.ok, false);
+  assert.equal(fs.readFileSync(artifactPath, "utf8"), "user-owned workplan draft\n");
+  assert.ok(store.readEvents(session.dir).some((e) => e.type === EVENTS.WORKPLAN_GENERATION_FAILED && e.action === "ask_user_to_resolve_dirty_workplan"));
+
+  const second = await generateWorkplanForSession(options);
+  assert.equal(second.ok, false);
+  assert.equal(fs.readFileSync(artifactPath, "utf8"), "user-owned workplan draft\n");
+
+  teardownTest();
+  pass();
+}
+
 async function testWorkplanStateAndTranscriptEvents() {
   setupTest("workplan events derive state and transcript");
 
@@ -1929,6 +1982,7 @@ async function main() {
   await testWorkplanCouncilPromptsRenderContract();
   await testWorkplanArtifactHelpers();
   await testGenerateMarkdownWorkplanCouncilFlow();
+  await testWorkplanDirtyFailedRetryPreservesUserFile();
   await testWorkplanStateAndTranscriptEvents();
   await testWorkplanCouncilStateAndTranscriptEvents();
   await testLegacyJsonWorkplanStillDerivesState();
